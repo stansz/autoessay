@@ -2,8 +2,116 @@
 
 ## Overview
 An autonomous pipeline for generating non-fiction essays and short papers.
-CLI-first, modify→evaluate→keep/discard loop, style-aware.
-Inspired by `autonovel` but rebuilt for non-fiction from scratch.
+CLI-first, modify→evaluate→keep/discard loop, style-aware, provider-agnostic.
+Inspired by `autonovel` (NousResearch) and `autoresearch` (Karpathy), rebuilt from scratch for non-fiction.
+
+---
+
+## Why autoessay — Competitive Landscape
+
+The AI writing tool space is crowded, but segmented into gaps that autoessay fills:
+
+| Segment | Representative tools | What they do | What they miss |
+|---|---|---|---|
+| **Academic research** | AutoResearchClaw, PaperOrchestra (Google), OpenDraft, Open Paper Machine | Idea → LaTeX paper. Heavy on citations, peer review, lit search | Only for formal research papers |
+| **Student essays** | EssayGenius (blakeatech), Jenni, Aithor, Paperpal | Outline → draft → citations. Academic integrity focused, SaaS | School assignments only, not for real-world writing |
+| **Fiction** | autonovel, Sudowrite, StoryCraftr | World-building, characters, plot beats | Not relevant to non-fiction |
+| **General AI writing** | Jasper, Copy.ai, Rytr | Marketing copy, blog posts | Single-shot generation, no pipeline or style control |
+
+**The gap autoessay owns:** opinion essays, think pieces, magazine longform, policy briefs, technical whitepapers, Substack-style personal essays. Everything between "write my term paper" and "write my NeurIPS submission" is unserved by pipeline-based tools.
+
+### Key differentiators
+
+| Feature | autoessay | Anyone else? |
+|---|---|---|
+| **Interactive style discovery survey** | Yes — ranking-based profile derivation | Not in any tool |
+| **Provider-agnostic** | Anthropic, DeepSeek, OpenRouter, Z.ai, and more | Most tools vendor-lock to OpenAI or Anthropic |
+| **RAG-based few-shot style injection** | Yes — style exemplars in every prompt | No pipeline tool does this |
+| **Source tracking with hallucination gate** | Yes — factual accuracy evaluator | PaperOrchestra does citation verification; nobody does general hallucination detection |
+| **CLI-first, local data** | Yes — all data on your machine | Most are SaaS |
+| **Multi-format export** | LaTeX PDF, ePub, plain markdown | Some do PDF, none do all three well |
+
+---
+
+## Provider System
+
+autoessay is provider-agnostic. Any LLM provider with an OpenAI-compatible API works.
+
+### Architecture
+
+All LLM calls go through `provider.py` — a thin abstraction that:
+- Accepts a provider name + model ID
+- Routes to the correct API endpoint
+- Handles authentication, retries, rate limiting
+- Returns standardized response objects
+
+### Default provider configuration
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "base_url": "https://api.anthropic.com/v1",
+      "env_key": "ANTHROPIC_API_KEY",
+      "models": {
+        "fast": "claude-sonnet-4-20250514",
+        "smart": "claude-opus-4-20250514"
+      }
+    },
+    "deepseek": {
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "models": {
+        "fast": "deepseek-chat",
+        "smart": "deepseek-reasoner"
+      }
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "env_key": "OPENROUTER_API_KEY",
+      "models": {
+        "fast": "deepseek/deepseek-chat",
+        "smart": "anthropic/claude-sonnet-4"
+      }
+    },
+    "zai": {
+      "base_url": "https://api.z.ai/api/v1",
+      "env_key": "ZAI_API_KEY",
+      "models": {
+        "fast": "glm-4-flash",
+        "smart": "glm-4-plus"
+      }
+    }
+  }
+}
+```
+
+### Role-to-model mapping
+
+Each pipeline phase has a recommended model tier, not a specific model:
+
+| Phase | Tier | Why |
+|---|---|---|
+| `gen_research.py` | smart | Deep reasoning needed for research synthesis |
+| `gen_outline.py` | smart | Structural reasoning |
+| `draft_section.py` | fast | Volume — many sections, each iterative |
+| `evaluate.py` | fast (different provider) | Separate provider from drafter to avoid self-review bias |
+| `reader_panel.py` | smart | Multi-persona reasoning |
+| `gen_revision.py` | fast | Follows revision brief, not creative from scratch |
+| `tighten.py` | fast | Mechanical word reduction |
+| `gen_revision_brief.py` | smart | Synthesize feedback into actionable plan |
+
+The user sets `fast_provider` and `smart_provider` in config. Defaults to whatever API keys are present. If only one provider is configured, autoessay uses different models from the same provider for drafter vs evaluator.
+
+### Provider selection logic
+
+```
+1. Check .env for available API keys
+2. User-specified providers take priority (config.json)
+3. Fallback: any available provider
+4. Drafting and evaluation MUST use different providers or different models
+   (self-review bias prevention)
+```
 
 ---
 
@@ -14,11 +122,12 @@ Inspired by `autonovel` but rebuilt for non-fiction from scratch.
 - Select style profile (standard or custom)
 - Set audience level (general → expert, 1–5 slider)
 - Set target length (words), citation density preference
+- Configure providers (or accept auto-detection)
 
 ### Phase 1: Research
 - `gen_research.py` — Deep research pass: generates structured research notes
   - Key claims, supporting evidence, counterarguments, sources
-  - Sources tracked with identifiers (URL, title, key quote)
+  - Sources tracked with identifiers (URL, title, key quote, access date)
 - `gen_outline.py` — Thesis → argument structure → section map
   - Enforces non-fiction structure: intro/thesis → body arguments → counterarguments → conclusion
   - Each section tagged with source references
@@ -32,10 +141,11 @@ Inspired by `autonovel` but rebuilt for non-fiction from scratch.
 - `run_drafts.py` — Sequential section drafter with evaluation gates
 
 ### Phase 3: Evaluation (the core)
-- `evaluate.py` — Three scoring dimensions:
-  1. **Factual accuracy** — LLM fact-checker cross-references claims against provided sources
+- `evaluate.py` — Four scoring dimensions:
+  1. **Factual accuracy** — LLM fact-checker cross-references claims against provided sources. Separate anti-hallucination pass on every claim.
   2. **Argument coherence** — Does the logic flow? Are counterarguments engaged?
   3. **Style adherence** — Does it match the target style profile?
+  4. **Source integrity** — Are citations real? (CrossRef / Semantic Scholar verification). Are sources over-used? (embedding deduplication).
 - `reader_panel.py` — 3-persona evaluation (domain expert, general reader, editor)
 - Score thresholds: draft passes if all dimensions > threshold
 
@@ -46,7 +156,7 @@ Inspired by `autonovel` but rebuilt for non-fiction from scratch.
 - Loop until scores stabilize or max cycles reached
 
 ### Phase 5: Export
-- `typeset/` — LaTeX → PDF (academic paper, magazine layout, or plain report)
+- `typeset/` — LaTeX → PDF (academic, magazine, or report layout)
 - `build_epub.py` — ePub output
 - Optional: landing page, reading time estimate, TL;DR summary card
 
@@ -117,6 +227,32 @@ The survey result is saved as a named custom profile — user can return and twe
 
 ---
 
+## Anti-Hallucination System
+
+### Source verification gate
+
+After drafting, a separate LLM call (different provider/model from the drafter) checks every factual claim:
+
+```
+For each claim in section:
+  1. Is this claim supported by a provided source? → Source must exist in sources.json
+  2. Does the source actually say what the claim asserts? → Source text comparison
+  3. Is the source real? → CrossRef / Semantic Scholar API verification (academic sources)
+  4. Is this claim novel (not hallucinated)? → Factual consistency check
+```
+
+Claims that fail any check are flagged with severity (critical / major / minor). Critical flags block the draft from passing evaluation.
+
+### Source deduplication
+
+Using FAISS embeddings (inspired by EssayGenius):
+- Every source gets an embedding vector
+- Before adding a new source, check similarity against existing sources
+- Prevents the same source being cited under slightly different names
+- Prevents over-reliance on a single source
+
+---
+
 ## File Structure
 
 ```
@@ -132,10 +268,10 @@ The survey result is saved as a named custom profile — user can return and twe
   projects/
     <project-name>/
       seed.md                # Topic/concept
-      config.json            # Style, audience, length, citations
+      config.json            # Style, audience, length, providers, citations
       research.md            # Research notes
       outline.md             # Thesis + argument structure
-      sources.json           # Source registry with IDs
+      sources.json           # Source registry with IDs + embedding vectors
       sections/
         sec_01.md            # Drafted sections
         sec_02.md
@@ -158,7 +294,7 @@ REPO (framework, reusable):
     gen_outline.py           # Thesis → structure
     draft_section.py         # Write one section
     run_drafts.py            # Batch sequential drafter
-    evaluate.py              # Factual accuracy + argument + style scoring
+    evaluate.py              # Factual accuracy + argument + style + source scoring
     reader_panel.py          # 3-persona evaluation
     gen_revision_brief.py    # Aggregate feedback → revision plan
     gen_revision.py          # Rewrite section
@@ -166,6 +302,8 @@ REPO (framework, reusable):
     voice_fingerprint.py     # Extract style fingerprint from samples
     run_pipeline.py          # Full orchestrator
     survey.py                # Phase 2: interactive style discovery
+    provider.py              # Provider abstraction layer
+    source_checker.py        # Hallucination verification + citation validation
 
   typeset/
     essay.tex                # LaTeX template
@@ -173,13 +311,16 @@ REPO (framework, reusable):
     build_epub.py            # ePub output
 
   config/
+    providers.json           # Provider definitions (endpoints, models, tiers)
     .env.example             # API keys
     pyproject.toml
 ```
 
 ---
 
-## Data Model (state.json)
+## Data Model
+
+### state.json
 
 ```json
 {
@@ -188,17 +329,49 @@ REPO (framework, reusable):
   "style_profile": "magazine",
   "audience_level": 3,
   "target_words": 3000,
+  "providers": {
+    "fast": {"provider": "deepseek", "model": "deepseek-chat"},
+    "smart": {"provider": "anthropic", "model": "claude-sonnet-4-20250514"}
+  },
   "sections": [
     {
       "id": "sec_01",
       "title": "Introduction",
       "status": "complete",
-      "scores": {"accuracy": 8.2, "coherence": 7.5, "style": 8.9},
-      "revision_cycles": 2
+      "scores": {
+        "accuracy": 8.2,
+        "coherence": 7.5,
+        "style": 8.9,
+        "source_integrity": 9.1
+      },
+      "revision_cycles": 2,
+      "hallucination_flags": []
     }
   ],
   "overall_score": null,
   "plateau_detected": false
+}
+```
+
+### sources.json
+
+```json
+{
+  "sources": [
+    {
+      "id": "src_01",
+      "type": "academic",
+      "title": "Title of the paper",
+      "authors": ["Author Name"],
+      "year": 2025,
+      "doi": "10.1234/example",
+      "url": "https://...",
+      "key_quote": "The relevant excerpt...",
+      "embedding_vector": [0.123, 0.456, ...],
+      "verified": true,
+      "verification_source": "crossref"
+    }
+  ]
 }
 ```
 
@@ -208,41 +381,45 @@ REPO (framework, reusable):
 
 | Dimension | Sub-scores | Method |
 |---|---|---|
-| **Factual accuracy** | Source fidelity, claim verification, absence of hallucination | LLM fact-checker cross-references sources |
+| **Factual accuracy** | Source fidelity, claim verification, absence of hallucination | Separate LLM fact-checker cross-references sources. Different provider/model from drafter. |
 | **Argument coherence** | Thesis clarity, logical flow, counterargument engagement, conclusion strength | LLM judge + structural checks |
 | **Style adherence** | Register match, vocabulary tier, sentence variety, tonal consistency | Fingerprint comparison against style profile |
+| **Source integrity** | Citation verifiability, source diversity, absence of source hallucination | CrossRef/Semantic Scholar API + FAISS dedup |
 | **Readability** | Flesch-Kincaid, sentence length variance, paragraph structure | Mechanical scoring |
 
 ---
 
 ## API Dependencies
 
-| Service | Used for |
-|---|---|
-| Anthropic (Sonnet) | Drafting, evaluation, revision |
-| Anthropic (Opus) | Final review pass (optional, dual-persona) |
-| fal.ai | Optional: cover art |
-| ElevenLabs | Optional: audio version |
+| Service | Used for | Required? |
+|---|---|---|
+| Any LLM provider (Anthropic, DeepSeek, OpenRouter, Z.ai, etc.) | Drafting, evaluation, revision | Required (at least one) |
+| CrossRef / Semantic Scholar | Academic citation verification | Optional — improves source integrity scoring |
+| FAISS (local) | Source embedding deduplication | Included — no external API needed |
 
-Only Anthropic Sonnet is required. Opus review, art, and audio are optional flags.
+Only one LLM provider is required. A second provider (or different model from same provider) is recommended for evaluation to avoid self-review bias.
 
 ---
 
 ## Key Design Decisions
 
-1. **Style is not post-processing.** Baked into every generation call.
-2. **Sources are first-class citizens.** Every claim has a `source_id`. Factual accuracy gate checks them. No orphan claims.
-3. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
-4. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
-5. **Phase 2 survey is a UX differentiator.** Most tools ship style profiles as dropdowns. The survey makes style discovery interactive and personal.
+1. **Provider-agnostic.** Not locked to Anthropic. Works with anything that has an OpenAI-compatible API.
+2. **Style is not post-processing.** Baked into every generation call via profile + RAG exemplars.
+3. **Sources are first-class citizens.** Every claim has a `source_id`. Hallucination gate checks them. No orphan claims.
+4. **Drafter and evaluator must be different.** Separate providers or separate models — no self-review.
+5. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
+6. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
+7. **Style survey is our killer differentiator.** No tool in this space does interactive, ranking-based style discovery.
 
 ---
 
 ## Next Steps
 
-- [ ] Stub out project structure and `pyproject.toml`
+- [ ] Build `provider.py` — provider abstraction layer with DeepSeek, OpenRouter, Z.ai support
+- [ ] Ship provider definitions in `config/providers.json`
 - [ ] Build `voice_fingerprint.py` first (it's the engine for everything else)
 - [ ] Ship 5 standard style profiles
 - [ ] Build core pipeline: seed → research → outline → draft → evaluate
+- [ ] Build `source_checker.py` with hallucination detection
 - [ ] Add revision loop
-- [ ] Phase 2: style discovery survey
+- [ ] Phase 2: interactive style discovery survey
