@@ -2,7 +2,7 @@
 
 ## Overview
 An autonomous pipeline for generating non-fiction essays and short papers.
-CLI-first, modify→evaluate→keep/discard loop, style-aware, provider-agnostic.
+Agent-first UX, modify→evaluate→keep/discard loop, style-aware, provider-agnostic.
 Inspired by `autonovel` (NousResearch) and `autoresearch` (Karpathy), rebuilt from scratch for non-fiction.
 
 ---
@@ -112,6 +112,86 @@ The user sets `fast_provider` and `smart_provider` in config. Defaults to whatev
 4. Drafting and evaluation MUST use different providers or different models
    (self-review bias prevention)
 ```
+
+---
+
+## UX Architecture
+
+autoessay has two interfaces — an engine and an agent — with zero new infrastructure.
+
+### Primary UX: Agent Interface
+
+The user never sees the CLI. They talk to an AI agent (Hermes, Claude Code, OpenCode, etc.) in natural language via their existing channels (Mattermost, Telegram, WhatsApp). The agent owns the pipeline:
+
+```
+User: "Write me a 2000-word essay on whether remote work killed company culture.
+       Magazine style. Here are my thoughts..."
+       [attaches notes]
+
+Agent: [runs research → outline]
+       "Here's the structure I'm thinking:
+         1. The promise of remote work (2019-2020)
+         2. What we actually lost
+         3. The hybrid compromise
+         4. Where culture lives now
+        Does this track?"
+
+User: "Drop section 1, merge 2 and 3. Add a counter-section on companies that
+       thrived remote-first."
+
+Agent: [updates outline, commits, begins drafting]
+       [surfaces each section for feedback]
+       [runs evaluation, surfaces scores]
+       [iterates through revision cycles]
+```
+
+The agent is the editor. The pipeline is the engine. The user never thinks about phases, models, or YAML files.
+
+### Secondary UX: CLI (power users)
+
+The CLI still exists as the engine interface — useful for scripting, cron jobs, and direct control:
+
+```
+$ autoessay run --seed "climate policy" --profile magazine --audience 3 --words 2500
+$ autoessay evaluate --section sec_02
+$ autoessay revise --section sec_02 --feedback "weaker than sec_01"
+```
+
+### GitHub as Version Control & Review Surface
+
+Every essay project is a folder of markdown files. Each pipeline phase produces commits:
+
+```
+autoessay/
+  projects/
+    remote-work-culture/
+      .git/
+      seed.md              ← commit: "v0: seed"
+      outline.md           ← commit: "v1: outline"
+      sections/
+        sec_01.md          ← commit: "v2: draft sec 1-3"
+        sec_02.md
+        sec_03.md
+      revisions/
+        v3-revised.md      ← commit: "v3: revision pass 1"
+        v4-final.md        ← commit: "v4: revision pass 2"
+      output/
+        essay.pdf          ← commit: "v5: export"
+```
+
+**Workflow:**
+1. Agent creates project folder, inits git repo
+2. Each pipeline phase → commit with descriptive message
+3. User reviews sections on GitHub (markdown renders natively)
+4. User leaves feedback via GitHub comments, PR-style diff reviews, or direct chat
+5. Agent pulls feedback, regenerates, commits revision
+6. Full history preserved — can always diff against any previous draft
+
+**Benefits:**
+- Zero new infrastructure. GitHub is the preview, diff, and review tool
+- Full version history. Roll back any paragraph to any draft
+- Natural collaboration surface. Multiple people can comment on sections
+- Portable. Essays are just markdown files in a git repo
 
 ---
 
@@ -450,15 +530,17 @@ Only one LLM provider is required. A second provider (or different model from sa
 
 ## Key Design Decisions
 
-1. **Provider-agnostic.** Not locked to Anthropic. Works with anything that has an OpenAI-compatible API.
-2. **Style is configuration.** Profile determines pipeline behavior — hallucination gates, citation strictness, voice constraints all flow from the style choice. No scattered feature toggles.
-3. **Custom profiles via wizard.** Users tweak from a TUI or CLI flags, not YAML files. Fork a base profile, override knobs, save.
-4. **Style as generation context.** Every generator call gets the active profile + 2–3 RAG exemplars. Not a post-processing pass.
-5. **Sources are first-class citizens.** Every claim has a `source_id`. Hallucination gate checks them. No orphan claims.
-6. **Drafter and evaluator must be different.** Separate providers or separate models — no self-review.
-7. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
-8. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
-9. **Style survey is our killer differentiator.** No tool in this space does interactive, ranking-based style discovery.
+1. **Agent-first UX.** The primary interface is natural language via an AI agent. Users talk, the agent runs the pipeline. CLI exists for power users and scripting.
+2. **GitHub as review surface.** Every phase is a commit. Markdown renders natively. Diffs between drafts. PR-style feedback. Zero new infrastructure.
+3. **Provider-agnostic.** Not locked to Anthropic. Works with anything that has an OpenAI-compatible API.
+4. **Style is configuration.** Profile determines pipeline behavior — hallucination gates, citation strictness, voice constraints all flow from the style choice. No scattered feature toggles.
+5. **Custom profiles via wizard.** Users tweak from a TUI or CLI flags, not YAML files. Fork a base profile, override knobs, save.
+6. **Style as generation context.** Every generator call gets the active profile + 2–3 RAG exemplars. Not a post-processing pass.
+7. **Sources are first-class citizens.** Every claim has a `source_id`. Hallucination gate checks them. No orphan claims.
+8. **Drafter and evaluator must be different.** Separate providers or separate models — no self-review.
+9. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
+10. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
+11. **Style survey is our killer differentiator.** No tool in this space does interactive, ranking-based style discovery.
 
 ---
 
