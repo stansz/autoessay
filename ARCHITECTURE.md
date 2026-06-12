@@ -181,6 +181,52 @@ Style is NOT a post-processing pass. It's baked into generation.
 | **Personal Essay** | Substack, blog | First-person OK, conversational, opinion-forward, emotional arc |
 | **Policy Brief** | Think tank, advocacy | Executive summary, numbered recommendations, evidence-weighted, neutral-to-persuasive register |
 
+### Profile Behavior Matrix (pipeline controls per profile)
+
+Each profile carries its own pipeline behavior defaults. No user-facing feature toggles — the style profile IS the configuration:
+
+| Pipeline behavior | Academic | Magazine | Technical | Personal Essay | Policy Brief |
+|---|---|---|---|---|---|
+| Citation verification | CrossRef | light web | web | **off** | CrossRef |
+| Source deduplication | **on** | on | **on** | off | on |
+| Hallucination gate | strict | lenient | strict | **off** | strict |
+| Require citation/claim | **yes** | no | yes | no | yes |
+| Allow unsourced opinion | no | yes | no | **yes** | no |
+| Accuracy threshold | 8.5 | 7.0 | 8.5 | **N/A** | 8.5 |
+| First person | no | situational | no | **yes** | situational |
+| Passive voice | allowed | moderate | allowed | discouraged | discouraged |
+| Contractions | no | situational | no | **yes** | no |
+
+### Custom Profile Wizard
+
+Users can create a custom profile by starting from any base profile and overriding individual controls — no YAML editing required:
+
+```
+$ autoessay style custom
+Starting from: [Magazine ▼]
+
+  Pipeline gates:
+  [✓] Source deduplication (FAISS)
+  [✓] Hallucination detection      [strict / lenient / off]
+  [✓] Citation verification         [crossref / web / off]
+  [ ] Require citation per claim
+  [✓] Allow unsourced opinion
+
+  Voice constraints:
+  [ ] First person allowed
+  [ ] Passive voice allowed
+  [✓] Contractions allowed
+
+  Quality thresholds:
+  Accuracy:  [████████░░] 7.0
+  Coherence: [███████░░░] 7.0
+  Style:     [█████████░] 9.0
+
+  Save as: policy-blog-hybrid
+```
+
+Custom profiles inherit all defaults from the base profile, then layer the user's overrides on top. Saved to `~/.autoessay/styles/custom/<name>.yaml`. The wizard is available as both a TUI (`autoessay style custom`) and a CLI flag interface (`autoessay run --profile magazine --no-hallucination --allow-first-person`).
+
 ### Custom Profiles
 
 **Creation flow:**
@@ -258,12 +304,13 @@ Using FAISS embeddings (inspired by EssayGenius):
 ```
 ~/.autoessay/
   styles/                    # Style profiles (standard + custom)
-    academic.md
-    magazine.md
-    technical.md
-    personal-essay.md
-    policy-brief.md
-    my-voice.md              # user-created
+    academic.yaml
+    magazine.yaml
+    technical.yaml
+    personal-essay.yaml
+    policy-brief.yaml
+    custom/                   # User-tweaked profiles
+      my-hybrid.yaml
   exemplars/                 # User's style library (for RAG)
   projects/
     <project-name>/
@@ -404,12 +451,14 @@ Only one LLM provider is required. A second provider (or different model from sa
 ## Key Design Decisions
 
 1. **Provider-agnostic.** Not locked to Anthropic. Works with anything that has an OpenAI-compatible API.
-2. **Style is not post-processing.** Baked into every generation call via profile + RAG exemplars.
-3. **Sources are first-class citizens.** Every claim has a `source_id`. Hallucination gate checks them. No orphan claims.
-4. **Drafter and evaluator must be different.** Separate providers or separate models — no self-review.
-5. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
-6. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
-7. **Style survey is our killer differentiator.** No tool in this space does interactive, ranking-based style discovery.
+2. **Style is configuration.** Profile determines pipeline behavior — hallucination gates, citation strictness, voice constraints all flow from the style choice. No scattered feature toggles.
+3. **Custom profiles via wizard.** Users tweak from a TUI or CLI flags, not YAML files. Fork a base profile, override knobs, save.
+4. **Style as generation context.** Every generator call gets the active profile + 2–3 RAG exemplars. Not a post-processing pass.
+5. **Sources are first-class citizens.** Every claim has a `source_id`. Hallucination gate checks them. No orphan claims.
+6. **Drafter and evaluator must be different.** Separate providers or separate models — no self-review.
+7. **Each phase can run independently.** User can re-run just the outline, or just section 3, or just the evaluation.
+8. **Scores are transparent.** Every evaluation produces a breakdown. User sees *why* something scored low.
+9. **Style survey is our killer differentiator.** No tool in this space does interactive, ranking-based style discovery.
 
 ---
 
