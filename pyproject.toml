@@ -1,0 +1,9 @@
+[project]
+name = "autoessay"
+version = "0.1.0"
+description = "Autonomous essay and short paper writing pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+]
