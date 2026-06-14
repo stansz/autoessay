@@ -14,7 +14,6 @@ providers:
     env_key: ZAI_API_KEY
     models:
       fast: glm-5-turbo
-      smart: glm-5.2
 
 # openrouter:  # commented out — too unpredictable
 #   base_url: https://openrouter.ai/api/v1
