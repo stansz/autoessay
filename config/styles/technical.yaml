@@ -1,0 +1,64 @@
+# Technical style profile
+# For whitepapers, documentation, engineering blogs, technical reports
+
+name: technical
+use_case: Whitepaper, technical documentation, engineering blog, technical report
+key_traits:
+  - Precise and declarative — every sentence earns its place
+  - Minimal adjectives — let the facts and code speak
+  - Heavy on examples, code snippets, diagrams
+  - Structured for scanning — clear headings, bullet points where appropriate
+  - Assumes domain competence — doesn't over-explain basics
+
+# Pipeline behavior
+pipeline:
+  citation_verification: web         # Web-verify technical claims
+  source_deduplication: true         # FAISS embedding dedup
+  hallucination_gate: strict         # Technical accuracy is critical
+  require_citation_per_claim: true   # Benchmarks, specs, version numbers need sources
+  allow_unsourced_opinion: false     # Opinions must be labeled as such
+
+# Quality thresholds (1-10)
+thresholds:
+  accuracy: 8.5
+  coherence: 7.0
+  style: 7.5
+  source_integrity: 8.0
+
+# Voice constraints
+voice:
+  first_person: "false"                # "This document", "we" only for team authorship
+  passive_voice: "allowed"             # OK for describing systems: "the request is routed…"
+  contractions: "false"                # No contractions
+
+# Prompt instructions — injected into every drafting call
+prompt_instructions: |
+  You are writing a technical document. Follow these rules:
+
+  VOICE
+  - Declarative and precise. State what is, not what might be.
+  - No first person singular. "We" acceptable for team authorship: "We chose Rust for…"
+  - Passive voice acceptable for system descriptions: "Messages are routed through…"
+  - No contractions. No colloquialisms. No jokes unless they serve a specific explanatory purpose.
+
+  STRUCTURE
+  - Lead with the problem or the architecture — what are we building and why.
+  - Use clear, descriptive headings. A reader scanning headings should understand the document.
+  - Code blocks, diagrams, and tables are first-class content. Introduce them, show them, explain them.
+  - Bullet points for lists of features, requirements, or comparisons. Prose for reasoning.
+
+  EVIDENCE
+  - Benchmarks need numbers with methodology. "3x faster" needs "on what workload, measured how."
+  - Version numbers, API endpoints, and configuration values must be exact.
+  - Cite specifications, RFCs, or official docs for standards claims.
+
+  PROSE
+  - Short sentences (12-20 words). One idea per sentence.
+  - Cut every adjective and adverb that doesn't change meaning.
+  - "The system processes requests" — not "The robust, high-performance system efficiently processes incoming requests."
+  - Define acronyms on first use. Don't assume the reader knows your stack.
+
+  PROHIBITED
+  - Vague quantifiers — no "very", "extremely", "highly"
+  - Future promises — "will be implemented" is noise; describe what exists
+  - Hand-waving — "using advanced algorithms" without naming them

@@ -1,0 +1,66 @@
+# Personal Essay style profile
+# For Substack, personal blogs, opinion pieces, memoir-adjacent non-fiction
+
+name: personal-essay
+use_case: Substack, personal blog, opinion piece, memoir-adjacent non-fiction
+key_traits:
+  - First-person, conversational, opinion-forward
+  - Emotional arc — the writer's journey is part of the story
+  - Vivid, concrete, sensory details
+  - Loose structure — follows thought more than formal argument
+  - Voice-driven — the writing should sound like a specific person talking
+
+# Pipeline behavior
+pipeline:
+  citation_verification: "off"         # No formal citation verification
+  source_deduplication: false        # Not needed — personal essays don't cite heavily
+  hallucination_gate: "off"            # Personal experience isn't fact-checkable
+  require_citation_per_claim: false  # Personal experience is valid evidence
+  allow_unsourced_opinion: true      # The whole point
+
+# Quality thresholds (1-10)
+thresholds:
+  accuracy: null                     # Not scored — personal truth ≠ factual truth
+  coherence: 6.0
+  style: 9.0
+  source_integrity: null             # Not scored
+
+# Voice constraints
+voice:
+  first_person: "true"                 # "I" is the default perspective
+  passive_voice: "discouraged"         # Active voice preferred
+  contractions: "true"                 # Write like you talk
+
+# Prompt instructions — injected into every drafting call
+prompt_instructions: |
+  You are writing a personal essay. Follow these rules:
+
+  VOICE
+  - Write like a specific person talking to a friend. Not a generic blogger.
+  - First person is the default. "I" is not self-indulgent — it's the form.
+  - Use contractions. Write the way people speak.
+  - Voice varies with emotion — urgent when the stakes are high, reflective when processing, sharp when calling something out.
+  - Passive voice kills intimacy. "I saw" not "it was observed."
+
+  STRUCTURE
+  - Open with a moment, a question, or a provocation — something that makes the reader need to know what happens next.
+  - The structure follows thought, not an outline. Digressions are fine if they earn their keep.
+  - End somewhere different from where you started. The essay should feel like a journey.
+  - Paragraphs can be short. A single sentence is sometimes a paragraph.
+
+  EVIDENCE
+  - Personal experience IS evidence. "When I tried this, here's what happened."
+  - Observation and anecdote carry weight. You don't need a study to say people are lonely.
+  - When you do cite data or research, weave it in naturally: "The numbers back this up: 67% of…"
+  - Don't fake authority. "I'm not an expert, but…" is honest and builds trust.
+
+  PROSE
+  - Concrete, sensory, specific. "The coffee was cold and the chair was hard" not "The environment was unpleasant."
+  - Sentences should feel spoken. Read them aloud in your head before committing.
+  - Humor is welcome. Self-deprecation builds connection. Earnestness is underrated.
+
+  PROHIBITED
+  - "We live in a society…"
+  - False profundity — "In the end, we are all just…"
+  - TED Talk cadence — rhythmic-sentence, rhythmic-sentence, PAUSE FOR APPLAUSE
+  - Performative vulnerability. Be real, not curated.

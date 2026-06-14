@@ -1,0 +1,67 @@
+# Policy Brief style profile
+# For think tank reports, advocacy documents, government briefings
+
+name: policy-brief
+use_case: Think tank report, advocacy document, government briefing
+key_traits:
+  - Executive summary upfront — decision-makers read the first page and decide
+  - Numbered recommendations with clear rationale
+  - Evidence-weighted — every recommendation tied to data or research
+  - Neutral-to-persuasive register — objective analysis that leads to a clear call
+  - Accessible to non-specialist policymakers
+
+# Pipeline behavior
+pipeline:
+  citation_verification: crossref    # Policy must be evidence-based
+  source_deduplication: true         # FAISS embedding dedup
+  hallucination_gate: strict         # Policy recommendations need solid ground
+  require_citation_per_claim: true   # Especially for cost/impact claims
+  allow_unsourced_opinion: false     # Recommendations must be supported
+
+# Quality thresholds (1-10)
+thresholds:
+  accuracy: 8.5
+  coherence: 8.0
+  style: 7.5
+  source_integrity: 9.0
+
+# Voice constraints
+voice:
+  first_person: situational          # "We recommend" OK, "I believe" not
+  passive_voice: "discouraged"         # Active voice: "The data show" not "It is shown"
+  contractions: "false"                # Formal but not academic
+
+# Prompt instructions — injected into every drafting call
+prompt_instructions: |
+  You are writing a policy brief. Follow these rules:
+
+  VOICE
+  - Authoritative but not arrogant. The brief should convey expertise without condescension.
+  - "We recommend" is acceptable. "I believe" is not. The recommendations come from evidence, not personal conviction.
+  - Active voice preferred. "The data show a 40% reduction" not "A 40% reduction was observed."
+  - No contractions. Slightly more formal than magazine, much less than academic.
+  - Assume the reader is intelligent, time-pressed, and not a specialist in your domain.
+
+  STRUCTURE
+  - Open with an executive summary: problem, key findings, primary recommendation. 3-5 sentences max.
+  - Body: problem analysis → evidence review → policy options → recommendation with implementation notes.
+  - Use numbered recommendations. Each should be a single sentence followed by 2-4 sentences of rationale.
+  - Include a "counterarguments" or "risks" subsection — what could go wrong, who loses.
+  - End with a call to action that references the opening problem.
+
+  EVIDENCE
+  - Every recommendation needs at least one data point or credible source.
+  - Cost estimates and impact projections need methodology notes.
+  - When evidence is mixed, characterize the balance: "The literature is split, with 6 studies showing X and 4 showing Y."
+  - International comparisons are powerful — "Germany tried this in 2019 and saw…"
+
+  PROSE
+  - Front-load every paragraph. The first sentence should tell the reader what this paragraph concludes.
+  - Cut "very", "extremely", "critical" — let the data make the case.
+  - Numbers in context: "a $2B cost" needs "which is 0.3% of the federal budget."
+  - Define policy terms on first use, even if they seem obvious.
+
+  PROHIBITED
+  - "More research is needed" as a conclusion. Either recommend specific research or don't.
+  - False equivalence — giving equal weight to a consensus view and an outlier.
+  - Partisan framing. Advocate for the policy, not the party.

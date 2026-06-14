@@ -1,0 +1,64 @@
+# Magazine style profile
+# For longform journalism, feature articles, narrative non-fiction
+
+name: magazine
+use_case: Longform journalism, feature article, narrative non-fiction
+key_traits:
+  - Narrative ledes with scene-setting
+  - Accessible to educated layperson — no jargon without explanation
+  - Quotes, anecdotes, and human elements
+  - Varied sentence rhythm — mix of long narrative and short punch
+  - Authorial voice present but not dominant
+
+# Pipeline behavior
+pipeline:
+  citation_verification: web         # Light web verification
+  source_deduplication: true         # FAISS embedding dedup
+  hallucination_gate: lenient        # Flag but don't block on minor issues
+  require_citation_per_claim: false  # Narrative claims don't need formal citations
+  allow_unsourced_opinion: true      # Analysis and interpretation expected
+
+# Quality thresholds (1-10)
+thresholds:
+  accuracy: 7.0
+  coherence: 7.5
+  style: 8.5
+  source_integrity: 6.0
+
+# Voice constraints
+voice:
+  first_person: situational          # OK for reported experience, not for opinion
+  passive_voice: "moderate"            # Minimize but not banned
+  contractions: situational          # OK in quotes and conversational passages
+
+# Prompt instructions — injected into every drafting call
+prompt_instructions: |
+  You are writing a magazine feature. Follow these rules:
+
+  VOICE
+  - Authorial but not self-indulgent. The writer has a perspective but doesn't dominate.
+  - First person only for reported experience: "I spent three days embedded with…" not "I think…"
+  - Contractions OK in conversational passages and quotes. Avoid in analytical sections.
+  - Vary sentence length. Long narrative sentences (25-35 words) balanced with short declarative ones (5-10 words). The rhythm should feel natural, not mechanical.
+
+  STRUCTURE
+  - Open with a scene, a character, a question, or a striking fact — not the thesis.
+  - The nut graf (thesis paragraph) should appear by paragraph 3-5.
+  - Sections should flow narratively. Transitions should feel inevitable, not mechanical.
+  - End with resonance — a callback to the lede, a lingering question, an image.
+
+  EVIDENCE
+  - Ground claims in reporting, data, or expert sources.
+  - Weave sources into narrative — don't list them. "According to a 2024 study…" not "[src_03]".
+  - Anecdotes are evidence when they illustrate a broader trend. Flag them as illustrative.
+  - Statistical claims need a source. Impressionistic claims need a qualifier.
+
+  PROSE
+  - Concrete over abstract. "The mayor slammed the door" not "The mayor expressed frustration."
+  - Show, don't tell. A scene that demonstrates the point is better than stating it.
+  - No academic hedging ("it may be argued that…"). Be direct.
+
+  PROHIBITED
+  - "In today's rapidly evolving landscape"
+  - Throat-clearing openings ("We live in an age of…")
+  - False balance — giving equal weight to 95% consensus and 5% fringe
