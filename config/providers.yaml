@@ -1,43 +1,35 @@
-# Default provider configuration for autoessay
-# Model tiers are resolved at runtime based on available API keys
-# Set env keys in .env — autoessay auto-detects which providers are available
+# Provider configuration for autoessay
+# autoessay auto-detects available providers from .env keys
 
 providers:
-  anthropic:
-    base_url: https://api.anthropic.com/v1
-    env_key: ANTHROPIC_API_KEY
-    models:
-      fast: claude-sonnet-4-20250514
-      smart: claude-opus-4-20250514
-
   deepseek:
     base_url: https://api.deepseek.com/v1
     env_key: DEEPSEEK_API_KEY
     models:
-      fast: deepseek-chat
-      smart: deepseek-reasoner
+      fast: deepseek-v4-flash
+      smart: deepseek-v4-pro
+
+  zai:
+    base_url: https://api.z.ai/api/coding/paas/v4
+    env_key: ZAI_API_KEY
+    models:
+      fast: glm-5.2          # reasoning model — heavy on thinking tokens
+      smart: glm-5.2         # same model for both tiers (Coding Plan limited)
 
   openrouter:
     base_url: https://openrouter.ai/api/v1
     env_key: OPENROUTER_API_KEY
     models:
-      fast: deepseek/deepseek-chat
-      smart: anthropic/claude-sonnet-4
+      fast: google/gemini-2.0-flash
+      smart: deepseek/deepseek-v4-pro
 
-  zai:
-    base_url: https://api.z.ai/api/v1
-    env_key: ZAI_API_KEY
-    models:
-      fast: glm-4-flash
-      smart: glm-4-plus
-
-# Role-to-tier mapping — which pipeline phases use fast vs smart models
+# Role-to-tier mapping
 roles:
-  research: smart      # Deep reasoning for research synthesis
-  outline: smart       # Structural reasoning
-  drafting: fast       # Volume — many sections
-  evaluation: fast     # Different provider from drafting (anti-self-review)
-  reader_panel: smart  # Multi-persona reasoning
-  revision: fast       # Follows revision brief
-  tightening: fast     # Mechanical word reduction
-  revision_brief: smart # Synthesize feedback
+  research: smart
+  outline: smart
+  drafting: fast
+  evaluation: fast        # MUST differ from drafting provider (anti-self-review)
+  reader_panel: smart
+  revision: fast
+  tightening: fast
+  revision_brief: smart
