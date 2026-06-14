@@ -49,7 +49,7 @@ def generate_research(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="research",
+        role="research", prefer="zai",
         system=system_prompt,
         temperature=0.4,  # lower temp for factual research
     )

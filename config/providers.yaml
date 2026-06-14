@@ -28,7 +28,7 @@ roles:
   research: smart
   outline: smart
   drafting: fast
-  evaluation: smart       # DeepSeek v4-pro
+  evaluation: fast        # MUST differ from drafting provider (anti-self-review)
   reader_panel: smart
   revision: fast
   tightening: fast

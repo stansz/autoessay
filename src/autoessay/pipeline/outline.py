@@ -47,7 +47,7 @@ def generate_outline(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="outline",
+        role="outline", prefer="zai",
         system=system_prompt,
         temperature=0.5,
     )

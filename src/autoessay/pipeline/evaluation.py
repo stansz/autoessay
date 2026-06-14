@@ -77,7 +77,7 @@ def evaluate_section(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="evaluation",
+        role="evaluation", prefer="deepseek",
         system=system_prompt,
         temperature=0.3,  # low temp for consistent scoring
         exclude=exclude_provider,

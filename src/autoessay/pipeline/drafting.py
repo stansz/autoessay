@@ -49,7 +49,7 @@ def draft_section(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="drafting",
+        role="drafting", prefer="deepseek",
         system=system_prompt,
         temperature=0.7,
         max_tokens=4096,
