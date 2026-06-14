@@ -1,7 +1,6 @@
 """Style profile data model."""
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -16,7 +15,7 @@ class StyleProfile:
     hallucination_gate: str = "lenient"  # strict / lenient / off
     require_citation_per_claim: bool = False
     allow_unsourced_opinion: bool = True
-    accuracy_threshold: Optional[float] = 7.0
+    accuracy_threshold: float | None = 7.0
 
     # Voice constraints
     first_person: bool = False
