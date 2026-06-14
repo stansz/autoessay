@@ -47,71 +47,38 @@ All LLM calls go through `provider.py` — a thin abstraction that:
 
 ### Default provider configuration
 
-```json
-{
-  "providers": {
-    "anthropic": {
-      "base_url": "https://api.anthropic.com/v1",
-      "env_key": "ANTHROPIC_API_KEY",
-      "models": {
-        "fast": "claude-sonnet-4-20250514",
-        "smart": "claude-opus-4-20250514"
-      }
-    },
-    "deepseek": {
-      "base_url": "https://api.deepseek.com/v1",
-      "env_key": "DEEPSEEK_API_KEY",
-      "models": {
-        "fast": "deepseek-chat",
-        "smart": "deepseek-reasoner"
-      }
-    },
-    "openrouter": {
-      "base_url": "https://openrouter.ai/api/v1",
-      "env_key": "OPENROUTER_API_KEY",
-      "models": {
-        "fast": "deepseek/deepseek-chat",
-        "smart": "anthropic/claude-sonnet-4"
-      }
-    },
-    "zai": {
-      "base_url": "https://api.z.ai/api/v1",
-      "env_key": "ZAI_API_KEY",
-      "models": {
-        "fast": "glm-4-flash",
-        "smart": "glm-4-plus"
-      }
-    }
-  }
-}
+```yaml
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com/v1
+    env_key: DEEPSEEK_API_KEY
+    models:
+      fast: deepseek-v4-flash
+      smart: deepseek-v4-pro
+
+  zai:
+    base_url: https://api.z.ai/api/coding/paas/v4    # Coding Plan endpoint
+    env_key: ZAI_API_KEY
+    models:
+      fast: glm-5-turbo
+      smart: glm-5.2
+```
 ```
 
 ### Role-to-model mapping
 
-Each pipeline phase has a recommended model tier, not a specific model:
+| Phase | Tier | Provider | Model |
+|---|---|---|---|
+| Research | smart | Z.ai | `glm-5.2` |
+| Outline | smart | Z.ai | `glm-5.2` |
+| Drafting | fast | DeepSeek | `deepseek-v4-flash` |
+| Evaluation | smart | DeepSeek | `deepseek-v4-pro` |
+| Revision brief | smart | Z.ai | `glm-5.2` |
+| Revision | fast | DeepSeek | `deepseek-v4-flash` |
+| Tightening | fast | DeepSeek | `deepseek-v4-flash` |
+| Reader panel | smart | Z.ai | `glm-5.2` |
 
-| Phase | Tier | Why |
-|---|---|---|
-| `gen_research.py` | smart | Deep reasoning needed for research synthesis |
-| `gen_outline.py` | smart | Structural reasoning |
-| `draft_section.py` | fast | Volume — many sections, each iterative |
-| `evaluate.py` | fast (different provider) | Separate provider from drafter to avoid self-review bias |
-| `reader_panel.py` | smart | Multi-persona reasoning |
-| `gen_revision.py` | fast | Follows revision brief, not creative from scratch |
-| `tighten.py` | fast | Mechanical word reduction |
-| `gen_revision_brief.py` | smart | Synthesize feedback into actionable plan |
-
-The user sets `fast_provider` and `smart_provider` in config. Defaults to whatever API keys are present. If only one provider is configured, autoessay uses different models from the same provider for drafter vs evaluator.
-
-### Provider selection logic
-
-```
-1. Check .env for available API keys
-2. User-specified providers take priority (config.json)
-3. Fallback: any available provider
-4. Drafting and evaluation MUST use different providers or different models
-   (self-review bias prevention)
-```
+Provider selection: each pipeline role specifies its preferred provider. Z.ai handles all reasoning (research, outline, revision brief). DeepSeek handles all writing (drafting, evaluation, revision).
 
 ---
 
