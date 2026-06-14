@@ -60,7 +60,7 @@ def generate_revision_brief(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="revision_brief", prefer="zai",
+        role="revision_brief",
         system=system_prompt,
         temperature=0.5,
     )
@@ -106,7 +106,7 @@ def revise_section(
 
     resp = provider.chat_for_role(
         [{"role": "user", "content": user_prompt}],
-        role="revision", prefer="deepseek",
+        role="revision",
         system=system_prompt,
         temperature=0.6,
     )
