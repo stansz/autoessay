@@ -313,7 +313,7 @@ Custom profiles inherit all defaults from the base profile, then layer the user'
 ```
 User uploads 3–5 sample texts (their own writing or aspirational)
         ↓
-voice_fingerprint.py — extract:
+style/fingerprint.py — extract:
   - Sentence length distribution (mean, variance, burstiness)
   - Readability scores (Flesch-Kincaid, Gunning Fog, SMOG)
   - Vocabulary tier analysis
@@ -323,9 +323,9 @@ voice_fingerprint.py — extract:
   - Rhetorical device frequency (anaphora, tricolon, analogy, etc.)
   - Tonal register (formal ↔ conversational, measured ↔ urgent)
         ↓
-Generates style.md — a structured profile document injected into prompts
+Generates style.yaml — a structured profile document injected into prompts
         ↓
-Saved to ~/.autoessay/styles/<name>.md
+Saved to ~/.autoessay/styles/<name>.yaml
 ```
 
 **At generation time:** RAG retrieves the 2–3 most stylistically similar exemplars from the user's library and includes them as few-shot examples in the prompt.
@@ -346,7 +346,7 @@ Round 2: Show 3 paragraphs in the winning style cluster, vary sub-dimensions.
 Round 3: Generate 2 custom paragraphs from the derived profile.
          "Does this sound right?" → refine sliders or confirm.
 
-Output: A generated style.md profile + 2-3 auto-generated exemplars seeded into their library.
+Output: A generated style.yaml profile + 2-3 auto-generated exemplars seeded into their library.
 ```
 
 The survey result is saved as a named custom profile — user can return and tweak anytime. The ranking data itself is stored so future versions can improve the mapping from preferences → profile parameters.
@@ -426,7 +426,7 @@ REPO (framework, reusable):
     gen_revision_brief.py    # Aggregate feedback → revision plan
     gen_revision.py          # Rewrite section
     tighten.py               # Word-count reduction pass
-    voice_fingerprint.py     # Extract style fingerprint from samples
+    style/fingerprint.py      # Extract style fingerprint from samples
     run_pipeline.py          # Full orchestrator
     survey.py                # Phase 2: interactive style discovery
     provider.py              # Provider abstraction layer
@@ -438,7 +438,7 @@ REPO (framework, reusable):
     build_epub.py            # ePub output
 
   config/
-    providers.json           # Provider definitions (endpoints, models, tiers)
+    providers.yaml           # Provider definitions (endpoints, models, tiers)
     .env.example             # API keys
     pyproject.toml
 ```
@@ -547,10 +547,10 @@ Only one LLM provider is required. A second provider (or different model from sa
 ## Next Steps
 
 - [ ] Build `provider.py` — provider abstraction layer with DeepSeek, OpenRouter, Z.ai support
-- [ ] Ship provider definitions in `config/providers.json`
-- [ ] Build `voice_fingerprint.py` first (it's the engine for everything else)
-- [ ] Ship 5 standard style profiles
+- [ ] Ship provider definitions in `config/providers.yaml`
+- [ ] Build `style/fingerprint.py` — extract style fingerprint from writing samples
+- [ ] Ship 5 standard style profiles (YAML)
 - [ ] Build core pipeline: seed → research → outline → draft → evaluate
 - [ ] Build `source_checker.py` with hallucination detection
 - [ ] Add revision loop
-- [ ] Phase 2: interactive style discovery survey
+- [ ] Create autoessay Hermes skill for agent-first UX
