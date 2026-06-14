@@ -16,12 +16,12 @@ providers:
       fast: glm-5.2          # reasoning model — heavy on thinking tokens
       smart: glm-5.2         # same model for both tiers (Coding Plan limited)
 
-  openrouter:
-    base_url: https://openrouter.ai/api/v1
-    env_key: OPENROUTER_API_KEY
-    models:
-      fast: google/gemini-2.0-flash
-      smart: deepseek/deepseek-v4-pro
+# openrouter:  # commented out — too unpredictable
+#   base_url: https://openrouter.ai/api/v1
+#   env_key: OPENROUTER_API_KEY
+#   models:
+#     fast: deepseek/deepseek-v4-flash
+#     smart: deepseek/deepseek-v4-pro
 
 # Role-to-tier mapping
 roles:
