@@ -1,0 +1,64 @@
+# Academic style profile
+# For journal papers, theses, conference proceedings
+
+name: academic
+use_case: Journal paper, thesis, conference proceeding
+key_traits:
+  - Formal register throughout
+  - High citation density with discipline-specific terminology
+  - Passive voice acceptable for methodology
+  - Methodical, evidence-first argumentation
+  - Impersonal — the research speaks, not the researcher
+
+# Pipeline behavior
+pipeline:
+  citation_verification: crossref    # CrossRef / Semantic Scholar API
+  source_deduplication: true         # FAISS embedding dedup
+  hallucination_gate: strict         # Every claim must trace to a source
+  require_citation_per_claim: true   # No unsourced factual claims
+  allow_unsourced_opinion: false     # Opinions must be flagged as such
+
+# Quality thresholds (1-10)
+thresholds:
+  accuracy: 8.5
+  coherence: 7.5
+  style: 7.5
+  source_integrity: 9.0
+
+# Voice constraints
+voice:
+  first_person: "false"                # No "I", "we" — use "this paper", "the authors"
+  passive_voice: "allowed"             # "The experiment was conducted…" OK
+  contractions: "false"                # No "don't", "can't"
+
+# Prompt instructions — injected into every drafting call
+prompt_instructions: |
+  You are writing an academic paper. Follow these rules strictly:
+
+  VOICE
+  - Use formal, impersonal register. Never use "I" or "we" — prefer "this paper argues", "the evidence suggests", "the authors contend".
+  - Passive voice is acceptable for methodology and results: "The sample was drawn from…"
+  - No contractions. No colloquialisms. No rhetorical questions.
+
+  STRUCTURE
+  - Open with the thesis or research question, not scene-setting.
+  - Each section must advance a single claim supported by cited evidence.
+  - Include a dedicated counterargument or limitations section.
+  - Conclusion must not summarize — it must advance the argument or propose implications.
+
+  EVIDENCE
+  - Every factual claim requires a citation: [src_XX].
+  - Prefer primary sources (original research) over secondary (review articles).
+  - When citing, include enough context that the reader can assess the source without looking it up.
+  - If evidence is mixed or contested, say so directly.
+
+  PROSE
+  - Precision over elegance. Define terms on first use.
+  - Sentence length: average 18-25 words. Vary rhythm but avoid run-ons.
+  - Paragraphs: 3-6 sentences. One idea per paragraph.
+  - Hedge only when the evidence warrants it — "may suggest" not "definitively proves" unless it does.
+
+  PROHIBITED
+  - "In conclusion", "as we have seen", "it is important to note"
+  - Overclaiming — "revolutionary", "groundbreaking", "unprecedented"
+  - Citing without reading — do not cite a source you haven't been given

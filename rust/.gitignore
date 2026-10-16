@@ -1,0 +1,11 @@
+
+# cargo/rustup caches kept inside the sandbox so builds need no approvals
+.cargo-home/
+.rustup-home/
+target/
+
+# machine-local cargo config (see BUILD.md)
+.cargo/
+
+# macOS
+.DS_Store

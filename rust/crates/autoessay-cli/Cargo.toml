@@ -1,0 +1,39 @@
+[package]
+name = "autoessay-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "autoessay pipeline + CLI: the five pipeline phases (research, outline, drafting, evaluation, revision) and the end-to-end orchestrator."
+default-run = "autoessay"
+
+# This crate owns the pipeline phases, the orchestrator, and the CLI. Domain
+# types come from autoessay-core; LLM transport comes from autoessay-providers.
+# Every phase is written against the LlmClient trait (src/llm.rs) so it can be
+# driven offline by a MockLlm in tests and by the real async Provider in the
+# binary.
+[dependencies]
+autoessay-core = { path = "../autoessay-core" }
+autoessay-providers = { path = "../autoessay-providers" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+clap.workspace = true
+dirs.workspace = true
+regex = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "autoessay"
+path = "src/main.rs"
+
+[lib]
+name = "autoessay_cli"
+path = "src/lib.rs"

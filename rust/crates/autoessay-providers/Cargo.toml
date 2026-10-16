@@ -1,0 +1,34 @@
+[package]
+name = "autoessay-providers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "LLM provider abstraction for autoessay: config-driven routing, two-tier model selection, anti-self-review, and retry with exponential backoff."
+
+# autoessay-core is intentionally NOT a dependency of this crate (yet): the
+# provider layer is a pure HTTP/IO layer and shares no domain types with the
+# core crate, so depending on it would only couple two crates that do not need
+# to know about each other. The one shared concept, CoreError, is left to the
+# callers: every fallible API here returns Result<T, ProviderError>.
+#
+# TODO(rebase): if the workspace later wants ProviderError to interoperate with
+# autoessay_core::CoreError, add autoessay-core = { workspace = true } here and
+# an impl From<ProviderError> for CoreError in the core crate.
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+# wiremock 0.6 is the last release that still builds on the workspace
+# rust-version = 1.75 floor (0.7+/0.8 require edition 2024 / newer rustc).
+wiremock = "=0.6.5"
+
+[lints]
+workspace = true

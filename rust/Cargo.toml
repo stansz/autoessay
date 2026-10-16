@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/autoessay-core",
+    "crates/autoessay-providers",
+    "crates/autoessay-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+
+# These three are the whole point of the Rust rewrite: error paths must be
+# explicit values, not panics. They are enforced on library/binary code.
+# Test targets legitimately use unwrap/panic/assert, so each crate's test files
+# opt out with `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]`.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "deny"

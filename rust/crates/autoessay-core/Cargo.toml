@@ -1,0 +1,28 @@
+[package]
+name = "autoessay-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared domain types for the autoessay pipeline: style profiles, evaluation results, project state, and program-doc parsing."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "style_profiles"
+path = "tests/style_profiles.rs"
+
+[[test]]
+name = "state_serde"
+path = "tests/state_serde.rs"
+
+[[test]]
+name = "program_sections"
+path = "tests/program_sections.rs"
