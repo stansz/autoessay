@@ -95,7 +95,6 @@ pub async fn generate_revision_brief<C: LlmClient>(
     );
 
     let request = ChatRequest::for_role("revision_brief", vec![ChatMessage::user(user_prompt)])
-        .prefer("zai")
         .system(program)
         .temperature(0.5);
 
@@ -121,7 +120,6 @@ pub async fn revise_section<C: LlmClient>(
     );
 
     let request = ChatRequest::for_role("revision", vec![ChatMessage::user(user_prompt)])
-        .prefer("deepseek")
         .system(system_prompt)
         .temperature(0.6);
 
