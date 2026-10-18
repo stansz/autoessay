@@ -1,34 +1,52 @@
-# Provider configuration for autoessay
-# autoessay auto-detects available providers from .env keys
+# Provider configuration for autoessay — MVP setup.
+#
+# One OpenRouter key gives access to every model below, so the MVP needs no
+# second provider account. The flow deliberately uses two *different model
+# families*: a cheap, fast writer and a stronger editor. That keeps the
+# anti-self-review rule ("the evaluator must not grade the drafter") true with a
+# single provider.
+#
+# Set OPENROUTER_API_KEY in the environment or in a .env file at the repo root
+# (see .env.example). Get a key at https://openrouter.ai/keys
+#
+# Pricing, 2026-10 (per million tokens, input/output):
+#   deepseek/deepseek-v4.1-flash   $0.06 / $0.12
+#   anthropic/claude-sonnet-4.6    $3.00 / $15.00
+# A 2,500-word essay with a couple of revision cycles costs cents, not dollars.
+#
+# Add a direct provider (uncomment and set its key) only when you want to
+# compare backends; the pipeline is provider-agnostic.
 
 providers:
-  deepseek:
-    base_url: https://api.deepseek.com/v1
-    env_key: DEEPSEEK_API_KEY
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    env_key: OPENROUTER_API_KEY
     models:
-      fast: deepseek-v4-flash
-      smart: deepseek-v4-pro
+      fast: deepseek/deepseek-v4.1-flash        # writer: drafting, revision
+      smart: anthropic/claude-sonnet-4.6        # editor: research, outline, evaluation, brief
 
-  zai:
-    base_url: https://api.z.ai/api/coding/paas/v4
-    env_key: ZAI_API_KEY
-    models:
-      fast: glm-5-turbo
-      smart: glm-5.2
+  # deepseek:                                   # direct API, optional
+  #   base_url: https://api.deepseek.com/v1
+  #   env_key: DEEPSEEK_API_KEY
+  #   models:
+  #     fast: deepseek-flash
+  #     smart: deepseek-v4-pro
 
-# openrouter:  # commented out — too unpredictable
-#   base_url: https://openrouter.ai/api/v1
-#   env_key: OPENROUTER_API_KEY
-#   models:
-#     fast: deepseek/deepseek-v4-flash
-#     smart: deepseek/deepseek-v4-pro
+  # zai:                                        # direct API, optional
+  #   base_url: https://api.z.ai/api/coding/paas/v4
+  #   env_key: ZAI_API_KEY
+  #   models:
+  #     fast: glm-5-turbo
+  #     smart: glm-5.2
 
-# Role-to-tier mapping
+# Role-to-tier mapping. `evaluation` MUST resolve to a different model than
+# `drafting` — the pipeline refuses to run otherwise. With the two models above,
+# drafting resolves to deepseek-v4.1-flash and evaluation to claude-sonnet-4.6.
 roles:
   research: smart
   outline: smart
   drafting: fast
-  evaluation: fast        # MUST differ from drafting provider (anti-self-review)
+  evaluation: smart
   reader_panel: smart
   revision: fast
   tightening: fast
