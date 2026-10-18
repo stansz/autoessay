@@ -28,7 +28,7 @@ use crate::error::{CliError, CliResult};
 use crate::llm::LlmClient;
 use crate::phases::{
     draft_section, evaluate_section, generate_outline, generate_research, generate_revision_brief,
-    mean_score, parse_outline, revise_section, revise_until_pass, ReviseConfig,
+    mean_score, parse_outline, revise_section, revise_until_pass, ReviseConfig, SectionBrief,
 };
 use crate::sources::extract_sources;
 
@@ -60,6 +60,8 @@ pub struct PipelineReport {
     pub research_md: String,
     pub outline_md: String,
     pub sections: Vec<SectionReport>,
+    /// The assembled markdown document written to `essay.md`.
+    pub essay_md: String,
     pub state: ProjectState,
     pub sources: SourcesFile,
     pub plateau_detected: bool,
@@ -83,6 +85,8 @@ pub async fn run_pipeline<C: LlmClient>(
     config: &PipelineConfig,
     style: &StyleProfile,
 ) -> CliResult<PipelineReport> {
+    ensure_distinct_models(llm)?;
+
     let dir = &config.project_dir;
     std::fs::create_dir_all(dir)?;
     std::fs::create_dir_all(dir.join("sections"))?;
@@ -145,6 +149,8 @@ pub async fn run_pipeline<C: LlmClient>(
     let mut reports: Vec<SectionReport> = Vec::new();
     let mut previous: Vec<String> = Vec::new();
     let mut plateau_any = false;
+    let section_count = parsed.sections.len().max(1);
+    let section_brief = section_brief(config.target_words, config.audience_level, section_count);
 
     for (idx, section) in parsed.sections.iter().enumerate() {
         let id = section_id(idx + 1);
@@ -165,20 +171,21 @@ pub async fn run_pipeline<C: LlmClient>(
             } else {
                 Some(&previous)
             },
+            section_brief,
         )
         .await?;
 
-        let exclude = config
-            .revise
-            .exclude_provider
-            .clone()
-            .or_else(|| Some("deepseek".to_string()));
+        // Persist the draft before evaluation: if the evaluation call fails the
+        // paid-for draft is still on disk and the run can be inspected.
+        let draft_body = format!("## {}\n\n{}", section.title, draft);
+        write_file(&dir.join("sections").join(format!("{id}.md")), &draft_body)?;
+
         let mut revise_config = config.revise.clone();
-        revise_config.exclude_provider = exclude;
+        revise_config.brief = section_brief;
 
         let outcome = revise_until_pass(llm, &draft, &research_md, style, &revise_config).await?;
 
-        // Write the section file (title heading + body).
+        // Write the final section file (title heading + body).
         let body = format!("## {}\n\n{}", section.title, outcome.final_section);
         write_file(&dir.join("sections").join(format!("{id}.md")), &body)?;
 
