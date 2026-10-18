@@ -12,6 +12,7 @@ use crate::docs::load_program_section;
 use crate::error::CliResult;
 use crate::llm::{ChatMessage, ChatRequest, LlmClient};
 
+use super::drafting::SectionBrief;
 use super::evaluation::{evaluate_section, format_score};
 
 /// Fallback revision-brief instructions if program.md is unavailable.
@@ -112,11 +113,18 @@ pub async fn revise_section<C: LlmClient>(
     revision_brief: &str,
     research_notes: &str,
     style: &StyleProfile,
+    brief: Option<SectionBrief>,
 ) -> CliResult<String> {
     let system_prompt = build_revise_system_prompt(style);
 
-    let user_prompt = format!(
-        "## Original Section\n\n{section_text}\n\n## Revision Brief\n\n{revision_brief}\n\n## Research Notes\n\n{research_notes}\n\nRewrite the section following the revision brief. Preserve what works. Fix what doesn't. Return only the revised section text — no preamble."
+    let mut user_prompt = format!(
+        "## Original Section\n\n{section_text}\n\n## Revision Brief\n\n{revision_brief}\n\n## Research Notes\n\n{research_notes}"
+    );
+    if let Some(brief) = brief {
+        user_prompt.push_str(&brief.prompt_block());
+    }
+    user_prompt.push_str(
+        "\n\nRewrite the section following the revision brief. Preserve what works. Fix what doesn't. Return only the revised section text — no preamble.",
     );
 
     let request = ChatRequest::for_role("revision", vec![ChatMessage::user(user_prompt)])
@@ -133,7 +141,12 @@ pub struct ReviseConfig {
     /// Maximum revision cycles before giving up.
     pub max_cycles: u32,
     /// Provider to exclude from evaluation (anti-self-review).
+    ///
+    /// The MVP leaves this unset: anti-self-review is enforced by resolving
+    /// drafting and evaluation to different models (see providers.yaml).
     pub exclude_provider: Option<String>,
+    /// Length/audience constraints passed to each rewrite.
+    pub brief: Option<SectionBrief>,
     /// Stop early when the score plateau is smaller than this (0 disables).
     pub plateau_epsilon: f64,
     /// Number of consecutive non-improving evaluations that counts as a plateau.
@@ -145,6 +158,7 @@ impl Default for ReviseConfig {
         ReviseConfig {
             max_cycles: 3,
             exclude_provider: None,
+            brief: None,
             plateau_epsilon: 0.05,
             plateau_patience: 2,
         }
@@ -208,7 +222,8 @@ pub async fn revise_until_pass<C: LlmClient>(
         }
 
         let brief = generate_revision_brief(llm, &current, &evaluation, style).await?;
-        current = revise_section(llm, &current, &brief, research_notes, style).await?;
+        current =
+            revise_section(llm, &current, &brief, research_notes, style, config.brief).await?;
         cycles_run += 1;
     }
 

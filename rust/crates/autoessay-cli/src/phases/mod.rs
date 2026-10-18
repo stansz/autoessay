@@ -13,7 +13,7 @@ pub mod revision;
 // Outline extraction helper used by the orchestrator.
 pub mod outline_parse;
 
-pub use drafting::{build_system_prompt, build_user_prompt, draft_section};
+pub use drafting::{build_system_prompt, build_user_prompt, draft_section, SectionBrief};
 pub use evaluation::{
     build_eval_system_prompt, build_eval_user_prompt, evaluate_section, extract_json,
     parse_eval_response,
