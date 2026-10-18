@@ -7,6 +7,11 @@ use autoessay_cli::llm::ProviderLlm;
 
 #[tokio::main]
 async fn main() {
+    // Load .env (if present) from the current directory or any ancestor, so
+    // `cp .env.example .env` works like it did in the Python implementation.
+    // Real environment variables keep precedence over .env values.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     let llm = match ProviderLlm::from_env() {

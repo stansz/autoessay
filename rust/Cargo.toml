@@ -9,7 +9,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# The dependency graph requires rustc >= 1.88 (icu 2.3, pulled in via url/reqwest).
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
@@ -22,6 +23,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
+dotenvy = "0.15"
 
 # These three are the whole point of the Rust rewrite: error paths must be
 # explicit values, not panics. They are enforced on library/binary code.

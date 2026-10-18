@@ -178,7 +178,6 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
         verbose: !args.quiet,
         revise: ReviseConfig {
             max_cycles: args.max_cycles,
-            exclude_provider: Some("deepseek".to_string()),
             ..ReviseConfig::default()
         },
     };
@@ -186,6 +185,7 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
     let report = run_pipeline(llm, &config, &style).await?;
 
     println!("project: {}", report.project_dir.display());
+    println!("essay:   {}", report.project_dir.join("essay.md").display());
     println!(
         "sections: {} ({} passed)",
         report.sections.len(),
