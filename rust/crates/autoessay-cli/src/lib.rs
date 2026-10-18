@@ -20,4 +20,4 @@ pub mod sources;
 pub mod styles;
 
 pub use error::{CliError, CliResult};
-pub use llm::{ChatMessage, ChatRequest, LlmClient, LlmResponse, MockLlm, ProviderLlm};
+pub use llm::{ChatMessage, ChatRequest, LlmClient, LlmResponse, MockLlm, ProviderLlm, Route};

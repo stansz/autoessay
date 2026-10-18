@@ -165,7 +165,7 @@ impl ProviderRegistry {
 
     /// Load using config discovery but an injected environment.
     pub fn load_with_env(env: HashMap<String, String>) -> ProviderResult<Self> {
-        match Self::find_config()? {
+        match Self::find_config(&env)? {
             ConfigSource::Path(path) => Self::from_env_with_path(path, env),
             ConfigSource::Embedded => {
                 Self::from_yaml_str(DEFAULT_PROVIDERS_YAML, env, embedded_path())
@@ -173,12 +173,15 @@ impl ProviderRegistry {
         }
     }
 
-    /// Locate providers.yaml via env var, CWD, or fall back to the embedded copy.
+    /// Locate providers.yaml via env var, CWD, the crate config, or fall back to
+    /// the embedded copy.
     ///
     /// Port of _find_config(), except that a missing file on disk is no longer
-    /// fatal: the shipped default is embedded in the binary.
-    fn find_config() -> ProviderResult<ConfigSource> {
-        if let Ok(path) = std::env::var("AUTOESSAY_CONFIG") {
+    /// fatal: the shipped default is embedded in the binary. Discovery reads the
+    /// injected environment rather than the process environment so tests can
+    /// exercise `AUTOESSAY_CONFIG`.
+    fn find_config(env: &HashMap<String, String>) -> ProviderResult<ConfigSource> {
+        if let Some(path) = env.get("AUTOESSAY_CONFIG").filter(|value| !value.is_empty()) {
             return Ok(ConfigSource::Path(PathBuf::from(path)));
         }
         for candidate in [
@@ -341,11 +344,9 @@ fn embedded_path() -> PathBuf {
     PathBuf::from("<embedded:config/providers.yaml>")
 }
 
-/// The config/providers.yaml next to the crate, when running from the repo.
+/// The config/providers.yaml shipped next to the crate sources.
 fn package_relative_config() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
         .join("config")
         .join("providers.yaml")
 }
