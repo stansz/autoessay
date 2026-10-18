@@ -1,20 +1,55 @@
 //! Phase 2 — Drafting: section brief -> written section with style and source context.
 //!
-//! Ports Python pipeline/drafting.py verbatim, including the prompt text and the
-//! _load_anti_slop behavior (disk copy preferred, bundled fallback).
+//! Ports Python pipeline/drafting.py, including the prompt text and the
+//! _load_anti_slop behavior (disk copy preferred, bundled fallback). Adds the
+//! runtime program.md Phase 2 instructions and the length/audience controls the
+//! CLI advertises.
 
 use crate::domains::StyleProfile;
-use crate::docs::load_anti_slop;
+use crate::docs::{load_anti_slop, load_program_section};
 use crate::error::CliResult;
 use crate::llm::{ChatMessage, ChatRequest, LlmClient};
 
-/// Assemble the full system prompt: program + style + anti-slop.
-/// Mirrors Python _build_system_prompt.
+/// Heading of the drafting instructions in program.md.
+const DRAFTING_PROGRAM_HEADING: &str = "Phase 2: Drafting (draft_section.py)";
+
+/// Length and audience constraints for one section's prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SectionBrief {
+    /// Approximate word budget for this section (0 disables the hint).
+    pub target_words: u32,
+    /// Audience level 1-5 (1 = general reader, 5 = specialist).
+    pub audience_level: u8,
+}
+
+impl SectionBrief {
+    /// The prompt block describing length and audience, or "" when no target is
+    /// set.
+    pub fn prompt_block(&self) -> String {
+        if self.target_words == 0 {
+            return String::new();
+        }
+        format!(
+            "\n\n## Length and Audience\n\n- Target length for this section: about {} words. Stay close to it — do not pad.\n- Audience level: {}/5 (1 = general reader, 5 = specialist). Match vocabulary and assumed knowledge to that level.",
+            self.target_words, self.audience_level
+        )
+    }
+}
+
+/// Assemble the full system prompt: style + program.md Phase 2 + anti-slop.
+/// Mirrors Python _build_system_prompt, plus the runtime program section.
 pub fn build_system_prompt(style: &StyleProfile) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     // Style instructions (the primary voice guide)
     parts.push(style.prompt_instructions.clone());
+
+    // Phase 2 instructions from program.md (loaded at runtime; disk edits win).
+    let program = load_program_section(DRAFTING_PROGRAM_HEADING);
+    if !program.is_empty() {
+        parts.push("\n\n---\n\n".to_string());
+        parts.push(program);
+    }
 
     // Anti-slop rules — loaded from ANTI-SLOP.md
     let anti_slop = load_anti_slop();
@@ -27,13 +62,14 @@ pub fn build_system_prompt(style: &StyleProfile) -> String {
 }
 
 /// Assemble the user prompt with section brief, research, and sources.
-/// Mirrors Python _build_user_prompt.
+/// Mirrors Python _build_user_prompt, plus length and audience controls.
 pub fn build_user_prompt(
     title: &str,
     purpose: &str,
     research: &str,
     sources: Option<&[String]>,
     previous_sections: Option<&[String]>,
+    brief: Option<SectionBrief>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -62,6 +98,10 @@ pub fn build_user_prompt(
         }
     }
 
+    if let Some(brief) = brief {
+        parts.push(brief.prompt_block());
+    }
+
     parts.push(
         "\n\nWrite only the section content. Do not repeat the section title as a heading — it will be added separately."
             .to_string(),
@@ -72,9 +112,9 @@ pub fn build_user_prompt(
 
 /// Draft a single section of the essay.
 ///
-/// Injects the style profile's prompt instructions, anti-slop rules, research
-/// context, and source materials into the LLM call. Returns the drafted section
-/// as markdown.
+/// Injects the style profile's prompt instructions, program.md Phase 2
+/// instructions, anti-slop rules, research context, sources, and length/audience
+/// constraints into the LLM call. Returns the drafted section as markdown.
 pub async fn draft_section<C: LlmClient>(
     llm: &C,
     section_title: &str,
@@ -83,6 +123,7 @@ pub async fn draft_section<C: LlmClient>(
     style: &StyleProfile,
     sources: Option<&[String]>,
     previous_sections: Option<&[String]>,
+    brief: Option<SectionBrief>,
 ) -> CliResult<String> {
     let system_prompt = build_system_prompt(style);
     let user_prompt = build_user_prompt(
@@ -91,10 +132,10 @@ pub async fn draft_section<C: LlmClient>(
         research_notes,
         sources,
         previous_sections,
+        brief,
     );
 
     let request = ChatRequest::for_role("drafting", vec![ChatMessage::user(user_prompt)])
-        .prefer("deepseek")
         .system(system_prompt)
         .temperature(0.7)
         .max_tokens(4096);
