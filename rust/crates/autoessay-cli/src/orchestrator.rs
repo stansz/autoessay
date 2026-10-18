@@ -279,7 +279,7 @@ pub async fn evaluate_project_section<C: LlmClient>(
     let section_body =
         read_file(&project_dir.join("sections").join(format!("{section_id}.md")))?;
     let section_text = strip_leading_heading(&section_body);
-    evaluate_section(llm, &section_text, &research, style, Some("deepseek")).await
+    evaluate_section(llm, &section_text, &research, style, None).await
 }
 
 /// Revise a single section in an existing project with extra human feedback
@@ -295,9 +295,9 @@ pub async fn revise_project_section<C: LlmClient>(
     let section_path = project_dir.join("sections").join(format!("{section_id}.md"));
     let section_body = read_file(&section_path)?;
     let section_text = strip_leading_heading(&section_body);
+    let title = leading_heading(&section_body).unwrap_or_else(|| section_id.to_string());
 
-    let evaluation =
-        evaluate_section(llm, &section_text, &research, style, Some("deepseek")).await?;
+    let evaluation = evaluate_section(llm, &section_text, &research, style, None).await?;
 
     // Fold the human feedback into the brief request.
     let mut brief = generate_revision_brief(llm, &section_text, &evaluation, style).await?;
@@ -306,8 +306,14 @@ pub async fn revise_project_section<C: LlmClient>(
         brief.push_str(feedback);
     }
 
-    let revised = revise_section(llm, &section_text, &brief, &research, style).await?;
-    let body = format!("## {section_id}\n\n{revised}");
+    // Keep the previous version so `revise` never silently destroys a draft.
+    let archive = project_dir
+        .join("revisions")
+        .join(format!("{section_id}-pre-revise.md"));
+    write_file(&archive, &section_body)?;
+
+    let revised = revise_section(llm, &section_text, &brief, &research, style, None).await?;
+    let body = format!("## {title}\n\n{revised}");
     write_file(&section_path, &body)?;
 
     // Refresh state.json for this section.
@@ -317,12 +323,14 @@ pub async fn revise_project_section<C: LlmClient>(
             if let Ok(mut state) = ProjectState::from_json(&json) {
                 if let Some(entry) = state.section_mut(section_id) {
                     entry.status = SectionStatus::Drafted;
+                    entry.revision_cycles += 1;
                     entry.scores = Scores {
                         accuracy: evaluation.accuracy,
                         coherence: evaluation.coherence,
                         style: evaluation.style,
                         source_integrity: evaluation.source_integrity,
                     };
+                    entry.hallucination_flags = evaluation.hallucination_flags.clone();
                 }
                 write_state(&state, project_dir)?;
             }
@@ -331,7 +339,7 @@ pub async fn revise_project_section<C: LlmClient>(
 
     Ok(SectionReport {
         id: section_id.to_string(),
-        title: section_id.to_string(),
+        title,
         final_text: body,
         evaluations: vec![evaluation],
         cycles: 1,
@@ -426,6 +434,21 @@ fn strip_leading_heading(body: &str) -> String {
         }
     }
     body.to_string()
+}
+
+/// The text of the first heading line, if the document starts with one.
+fn leading_heading(body: &str) -> Option<String> {
+    let first = body.lines().next()?;
+    let trimmed = first.trim_start();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+    let title = trimmed.trim_start_matches('#').trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
 }
 
 fn write_state(state: &ProjectState, dir: &Path) -> CliResult<()> {
