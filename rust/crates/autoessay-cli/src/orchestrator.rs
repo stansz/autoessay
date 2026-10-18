@@ -236,6 +236,10 @@ pub async fn run_pipeline<C: LlmClient>(
         write_state(&state, dir)?;
     }
 
+    // ---- Assemble the finished document ----
+    let essay_md = assemble_essay(config, &reports);
+    write_file(&dir.join("essay.md"), &essay_md)?;
+
     // ---- Final state ----
     state.plateau_detected = plateau_any;
     let means: Vec<f64> = reports
@@ -256,6 +260,7 @@ pub async fn run_pipeline<C: LlmClient>(
         research_md,
         outline_md,
         sections: reports,
+        essay_md,
         state,
         sources,
         plateau_detected: plateau_any,
@@ -338,6 +343,54 @@ pub async fn revise_project_section<C: LlmClient>(
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Refuse to run when drafting and evaluation resolve to the same model.
+///
+/// This is the production form of the anti-self-review rule: with a single
+/// provider (OpenRouter), the two roles must still land on different models.
+/// Mocks that cannot report routes (offline tests) skip the check.
+fn ensure_distinct_models<C: LlmClient>(llm: &C) -> CliResult<()> {
+    let drafting = llm.route_for_role("drafting");
+    let evaluation = llm.route_for_role("evaluation");
+    match (drafting, evaluation) {
+        (Some(drafting), Some(evaluation)) if drafting == evaluation => {
+            Err(CliError::invalid_input(format!(
+                "anti-self-review check failed: drafting and evaluation both resolve to '{}' via '{}'. \
+                 Set a different tier/model for the evaluation role in providers.yaml.",
+                drafting.model, drafting.provider
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Per-section word budget and audience for prompts.
+fn section_brief(
+    target_words: u32,
+    audience_level: u8,
+    section_count: usize,
+) -> Option<SectionBrief> {
+    if target_words == 0 {
+        return None;
+    }
+    let count = section_count.max(1) as u32;
+    let per_section = (target_words / count).max(150);
+    Some(SectionBrief {
+        target_words: per_section,
+        audience_level,
+    })
+}
+
+/// Join the section files into one markdown document.
+fn assemble_essay(config: &PipelineConfig, reports: &[SectionReport]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {}\n\n", config.seed.trim()));
+    for report in reports {
+        out.push_str(report.final_text.trim_end());
+        out.push_str("\n\n");
+    }
+    out.trim_end().to_string() + "\n"
+}
 
 /// Build seed.md from the run configuration.
 fn build_seed_md(config: &PipelineConfig, style: &StyleProfile) -> String {
