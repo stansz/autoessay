@@ -24,6 +24,18 @@ use crate::error::{CliError, CliResult};
 pub use autoessay_providers::Message as ChatMessage;
 pub use autoessay_providers::LLMResponse as LlmResponse;
 
+/// The (provider, model) pair a pipeline role resolves to.
+///
+/// Used for the anti-self-review check: `drafting` and `evaluation` must not
+/// resolve to the same model, or the evaluator would grade its own writing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    /// Provider name from providers.yaml, e.g. "openrouter".
+    pub provider: String,
+    /// Model id, e.g. "deepseek/deepseek-v4.1-flash".
+    pub model: String,
+}
+
 /// Parameters for a single chat call, mirroring Provider.chat_for_role.
 ///
 /// role selects the tier (research/outline/revision_brief -> smart;
@@ -105,6 +117,15 @@ pub trait LlmClient {
         &self,
         request: ChatRequest,
     ) -> impl std::future::Future<Output = CliResult<LLMResponse>> + Send;
+
+    /// Resolve the (provider, model) pair a pipeline role would use, when the
+    /// client can report it.
+    ///
+    /// The real client resolves this from `providers.yaml`; offline mocks return
+    /// `None`, which skips the anti-self-review check rather than failing it.
+    fn route_for_role(&self, _role: &str) -> Option<Route> {
+        None
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -259,5 +280,17 @@ impl LlmClient for ProviderLlm {
             )
             .await
             .map_err(|e| CliError::Llm(e.to_string()))
+    }
+
+    fn route_for_role(&self, role: &str) -> Option<Route> {
+        let registry = self.provider.registry();
+        let tier = registry.tier_for_role(role);
+        registry
+            .resolve_provider(tier, None, None)
+            .ok()
+            .map(|(cfg, model)| Route {
+                provider: cfg.name,
+                model,
+            })
     }
 }
