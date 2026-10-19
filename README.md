@@ -15,7 +15,7 @@ Inspired by the modify→evaluate→keep/discard loop from [NousResearch/autonov
 
 ```sh
 git clone https://github.com/stansz/autoessay && cd autoessay/rust
-cp .env.example .env          # add OPENROUTER_API_KEY
+cp .env.example .env          # add OPENROUTER_API_KEY; .env is gitignored
 cargo run -p autoessay-cli -- run \
   --seed "Whether remote work killed company culture" \
   --profile magazine --words 2200 --project-dir ./projects/remote-work
