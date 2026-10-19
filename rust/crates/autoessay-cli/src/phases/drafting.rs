@@ -115,6 +115,9 @@ pub fn build_user_prompt(
 /// Injects the style profile's prompt instructions, program.md Phase 2
 /// instructions, anti-slop rules, research context, sources, and length/audience
 /// constraints into the LLM call. Returns the drafted section as markdown.
+// The signature mirrors the Python phase arguments one-for-one; grouping them
+// into a struct here would only obscure the call sites.
+#[allow(clippy::too_many_arguments)]
 pub async fn draft_section<C: LlmClient>(
     llm: &C,
     section_title: &str,
