@@ -8,20 +8,25 @@
 //! well-formed, and sources.json is populated — all without HTTP.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use autoessay_cli::llm::MockLlm;
 use autoessay_cli::orchestrator::{run_pipeline, PipelineConfig};
 use autoessay_cli::phases::ReviseConfig;
 use autoessay_cli::styles::load_profile;
 
+/// Process-wide counter for unique temp dirs.
+///
+/// `SystemTime::now().as_nanos()` is not a reliable uniqueness source on all
+/// platforms (two calls in the same tick can return the same value); when two
+/// tests collide, one test's `remove_dir_all` deletes the other's files.
+static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn temp_dir() -> PathBuf {
-    let base = std::env::temp_dir().join("autoessay-cli-test").join(format!(
-        "run-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+    let n = TEST_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let base = std::env::temp_dir().join(format!(
+        "autoessay-cli-test-{}-{n}",
+        std::process::id()
     ));
     std::fs::create_dir_all(&base).expect("create temp dir");
     base
@@ -80,7 +85,6 @@ async fn orchestrator_end_to_end_produces_expected_files() {
         verbose: false,
         revise: ReviseConfig {
             max_cycles: 3,
-            exclude_provider: Some("deepseek".to_string()),
             ..ReviseConfig::default()
         },
     };
@@ -96,6 +100,7 @@ async fn orchestrator_end_to_end_produces_expected_files() {
         "outline.md",
         "state.json",
         "sources.json",
+        "essay.md",
     ] {
         assert!(dir.join(name).exists(), "missing {name}");
     }
@@ -127,6 +132,13 @@ async fn orchestrator_end_to_end_produces_expected_files() {
     let sec =
         std::fs::read_to_string(dir.join("sections").join("sec_01.md")).expect("read sec");
     assert!(sec.contains("## The Promise"));
+
+    // The assembled essay contains the title and both sections.
+    let essay = std::fs::read_to_string(dir.join("essay.md")).expect("read essay");
+    assert!(essay.starts_with("# remote work and culture"));
+    assert!(essay.contains("## The Promise"));
+    assert!(essay.contains("## What We Lost"));
+    assert_eq!(essay, report.essay_md);
 
     assert_eq!(report.sections.len(), 2);
     assert!(report.sections.iter().all(|s| s.passed));

@@ -305,10 +305,15 @@ fn system_prompt_shows_na_for_null_thresholds() {
 }
 
 #[test]
-fn system_prompt_falls_back_to_default_program() {
-    // The bundled program.md always provides the Phase 3 section; assert the
-    // JSON contract is present either way.
+fn system_prompt_includes_program_md_phase_3() {
+    // Regression: the backticked program.md heading used to make the lookup miss
+    // and silently fall back to the short default. The real Phase 3 text must
+    // now be present, and it must still demand the JSON contract.
     let prompt = build_eval_system_prompt(&magazine());
+    assert!(
+        prompt.contains("You are an editor"),
+        "Phase 3 program.md instructions missing from evaluator prompt: {prompt}"
+    );
     assert!(
         prompt.contains("JSON") || prompt.contains("Return ONLY"),
         "prompt should demand JSON: {prompt}"
