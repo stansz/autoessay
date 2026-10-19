@@ -125,12 +125,12 @@ async fn outline_receives_research_notes() {
 #[tokio::test]
 async fn drafting_uses_drafting_role_creative_temp_and_max_tokens() {
     let mock = MockLlm::always("ok");
-    draft_section(&mock, "Title", "Purpose", RESEARCH, &magazine(), None, None)
+    draft_section(&mock, "Title", "Purpose", RESEARCH, &magazine(), None, None, None)
         .await
         .expect("draft");
     let req = mock.last_request().expect("request");
     assert_eq!(req.role, "drafting");
-    assert_eq!(req.prefer.as_deref(), Some("deepseek"));
+    assert!(req.prefer.is_none());
     assert!((req.temperature - 0.7).abs() < f32::EPSILON);
     assert_eq!(req.max_tokens, 4096);
 }
@@ -138,7 +138,7 @@ async fn drafting_uses_drafting_role_creative_temp_and_max_tokens() {
 #[tokio::test]
 async fn drafting_system_includes_style_and_anti_slop() {
     let mock = MockLlm::always("ok");
-    draft_section(&mock, "T", "P", RESEARCH, &magazine(), None, None)
+    draft_section(&mock, "T", "P", RESEARCH, &magazine(), None, None, None)
         .await
         .expect("draft");
     let system = mock
@@ -164,6 +164,7 @@ async fn drafting_user_prompt_has_title_purpose_research_sources_previous() {
         &magazine(),
         Some(&sources),
         Some(&prev),
+        None,
     )
     .await
     .expect("draft");
@@ -179,7 +180,7 @@ async fn drafting_user_prompt_has_title_purpose_research_sources_previous() {
 
 #[test]
 fn drafting_omits_sources_and_previous_when_empty() {
-    let prompt = build_user_prompt("T", "P", RESEARCH, None, None);
+    let prompt = build_user_prompt("T", "P", RESEARCH, None, None, None);
     assert!(!prompt.contains("Use these sources"));
     assert!(!prompt.contains("Previous Sections"));
     assert!(prompt.contains("Write only the section content"));
@@ -232,6 +233,7 @@ async fn revise_section_includes_original_brief_and_style() {
         "1. [Paragraph 1] Strengthen the lede.",
         RESEARCH,
         &magazine(),
+        None,
     )
     .await
     .expect("revise");
@@ -346,6 +348,7 @@ async fn revise_until_pass_detects_plateau_and_stops_early() {
     let cfg = ReviseConfig {
         max_cycles: 5,
         exclude_provider: None,
+        brief: None,
         plateau_epsilon: 0.05,
         plateau_patience: 2,
     };
