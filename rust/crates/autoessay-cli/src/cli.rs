@@ -317,6 +317,85 @@ async fn cmd_revise<C: LlmClient>(args: &ReviseArgs, llm: &C) -> CliResult<()> {
     Ok(())
 }
 
+async fn cmd_improve<C: LlmClient>(args: &ImproveArgs, llm: &C) -> CliResult<()> {
+    let style = resolve_style(args.profile.as_deref(), &args.project_dir)?;
+    let context = project_context(&args.project_dir)?;
+    let proposal = propose_prompt_improvements(llm, &context, &style).await?;
+    let path = args.project_dir.join("improvements.md");
+    std::fs::write(&path, &proposal)?;
+    println!("prompt improvements: {}", path.display());
+    Ok(())
+}
+
+async fn cmd_panel<C: LlmClient>(args: &PanelArgs, llm: &C) -> CliResult<()> {
+    let style = resolve_style(args.profile.as_deref(), &args.project_dir)?;
+    let essay = read_project_essay(&args.project_dir)?;
+    let reviews = run_reader_panel(llm, &essay, &style).await?;
+    let markdown = render_panel(&reviews);
+    let path = args.project_dir.join("panel.md");
+    std::fs::write(&path, &markdown)?;
+    println!("reader panel: {}", path.display());
+    Ok(())
+}
+
+/// Build the context passed to the prompt-improvement phase.
+fn project_context(project_dir: &Path) -> CliResult<String> {
+    let state_path = project_dir.join("state.json");
+    let essay = read_project_essay(project_dir)?;
+    let mut out = String::from("# Project context\n\n");
+    if state_path.exists() {
+        let state = std::fs::read_to_string(&state_path)?;
+        out.push_str("## state.json (scores, flags, claims, evaluation notes)\n\n```json\n");
+        out.push_str(&truncate(&state, 16_000));
+        out.push_str("\n```\n\n");
+    }
+    out.push_str("## essay.md\n\n");
+    out.push_str(&truncate(&essay, 24_000));
+    out.push('\n');
+    Ok(out)
+}
+
+/// Read essay.md, falling back to concatenated sections for older projects.
+fn read_project_essay(project_dir: &Path) -> CliResult<String> {
+    let essay_path = project_dir.join("essay.md");
+    if essay_path.exists() {
+        return Ok(std::fs::read_to_string(&essay_path)?);
+    }
+    let sections_dir = project_dir.join("sections");
+    let mut paths: Vec<PathBuf> = match std::fs::read_dir(&sections_dir) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    paths.sort();
+    let mut out = String::new();
+    for path in paths {
+        out.push_str(&std::fs::read_to_string(&path)?);
+        out.push_str("\n\n");
+    }
+    if out.trim().is_empty() {
+        return Err(CliError::project(format!(
+            "no essay.md or sections/*.md found in {}",
+            project_dir.display()
+        )));
+    }
+    Ok(out)
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut end = max;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &text[..end])
+}
+
 fn cmd_styles(args: &StylesArgs) -> CliResult<()> {
     let names = list_profiles(args.dir.as_deref());
     if names.is_empty() {
