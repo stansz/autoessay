@@ -39,6 +39,28 @@ Drafting and evaluation resolve to **different model families**, so the
 evaluator never grades its own writing. The pipeline refuses to run if
 `roles.evaluation` is configured to the same model as `roles.drafting`.
 
+### Changing models/config without rebuilding
+
+Provider config is resolved at **runtime**, in this order:
+
+1. `--config <path>` (or `AUTOESSAY_CONFIG=<path>`)
+2. `./config/providers.yaml` in the directory you launch from
+3. `crates/autoessay-providers/config/providers.yaml` (local checkout)
+4. the copy embedded in the binary at build time (fallback only)
+
+Editing a file found by rules 1–3 takes effect on the next run — **no manual
+rebuild**. Only rule 4 needs `cargo build`/`cargo install` to refresh, which
+matters when you copy the binary to a machine without the source tree. `.env`
+keys, `program.md`, `ANTI-SLOP.md`, and style profiles in `config/styles/` are
+also read from disk at runtime; their embedded copies are fallbacks.
+
+```sh
+# switch model config per run, no rebuild:
+autoessay --config ./my-providers.yaml run --seed "..." --profile magazine
+# or:
+AUTOESSAY_CONFIG=./my-providers.yaml autoessay run --seed "..." --profile magazine
+```
+
 If you hit sandbox approval prompts on a restricted machine, see [BUILD.md](BUILD.md)
 for a build that keeps cargo's caches inside the repo.
 
