@@ -42,7 +42,10 @@ async fn research_uses_research_role_and_low_temp() {
         .expect("research");
     let req = mock.last_request().expect("a request");
     assert_eq!(req.role, "research");
-    assert_eq!(req.prefer.as_deref(), Some("zai"));
+    assert!(
+        req.prefer.is_none(),
+        "provider selection now comes from providers.yaml roles"
+    );
     assert!((req.temperature - 0.4).abs() < f32::EPSILON);
 }
 
@@ -98,7 +101,7 @@ async fn outline_uses_outline_role_and_temp() {
         .expect("outline");
     let req = mock.last_request().expect("request");
     assert_eq!(req.role, "outline");
-    assert_eq!(req.prefer.as_deref(), Some("zai"));
+    assert!(req.prefer.is_none());
     assert!((req.temperature - 0.5).abs() < f32::EPSILON);
 }
 
@@ -213,7 +216,7 @@ async fn revision_brief_includes_scores_and_notes() {
         .expect("brief");
     let req = mock.last_request().expect("request");
     assert_eq!(req.role, "revision_brief");
-    assert_eq!(req.prefer.as_deref(), Some("zai"));
+    assert!(req.prefer.is_none());
     let text = req.all_text();
     assert!(text.contains("5.0"), "accuracy score in prompt");
     assert!(text.contains("6.0"), "coherence score in prompt");
@@ -235,7 +238,7 @@ async fn revise_section_includes_original_brief_and_style() {
     assert!(out.contains("Revised section"));
     let req = mock.last_request().expect("request");
     assert_eq!(req.role, "revision");
-    assert_eq!(req.prefer.as_deref(), Some("deepseek"));
+    assert!(req.prefer.is_none());
     let text = req.all_text();
     assert!(text.contains("fragile"));
     assert!(text.contains("Paragraph 1"));

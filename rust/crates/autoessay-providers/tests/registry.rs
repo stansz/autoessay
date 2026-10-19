@@ -130,23 +130,27 @@ fn invalid_yaml_missing_providers_key_errors() {
 }
 
 #[test]
-fn embedded_default_config_parses_and_matches_fixture() {
+fn embedded_default_config_is_openrouter_with_two_distinct_models() {
     // The embedded default is the shipped config/providers.yaml.
     assert_eq!(
         DEFAULT_PROVIDERS_YAML,
         include_str!("../config/providers.yaml")
     );
-    let reg = registry_from(DEFAULT_PROVIDERS_YAML, &[("ZAI_API_KEY", "sk-zai")]);
-    assert_eq!(reg.available(), vec!["zai".to_string()]);
-    assert_eq!(reg.tier_for_role("revision_brief"), Tier::Smart);
-    assert_eq!(reg.tier_for_role("evaluation"), Tier::Fast);
-    assert_eq!(
-        reg.get("zai").unwrap().base_url,
-        "https://api.z.ai/api/coding/paas/v4"
-    );
-    assert_eq!(
-        reg.get("deepseek").unwrap().models.get("fast").unwrap(),
-        "deepseek-v4-flash"
+    let reg = registry_from(DEFAULT_PROVIDERS_YAML, &[("OPENROUTER_API_KEY", "sk-or")]);
+    assert_eq!(reg.available(), vec!["openrouter".to_string()]);
+
+    // One provider, two different model families: the writer and the evaluator.
+    assert_eq!(reg.tier_for_role("drafting"), Tier::Fast);
+    assert_eq!(reg.tier_for_role("evaluation"), Tier::Smart);
+    let (draft_cfg, draft_model) = reg.resolve_provider(Tier::Fast, None, None).unwrap();
+    let (eval_cfg, eval_model) = reg.resolve_provider(Tier::Smart, None, None).unwrap();
+    assert_eq!(draft_cfg.name, "openrouter");
+    assert_eq!(eval_cfg.name, "openrouter");
+    assert_eq!(draft_model, "deepseek/deepseek-v4.1-flash");
+    assert_eq!(eval_model, "anthropic/claude-sonnet-4.6");
+    assert_ne!(
+        draft_model, eval_model,
+        "anti-self-review requires drafting and evaluation to use different models"
     );
 }
 
