@@ -83,6 +83,18 @@ pub struct RunArgs {
     #[arg(long, default_value_t = 3)]
     pub max_cycles: u32,
 
+    /// Skip Crossref source verification (on by default).
+    #[arg(long)]
+    pub no_verify_sources: bool,
+
+    /// Skip the outline review / regeneration gate (on by default).
+    #[arg(long)]
+    pub no_outline_review: bool,
+
+    /// Ask a second judge model to score sections and average with the editor.
+    #[arg(long)]
+    pub double_judge: bool,
+
     /// Suppress progress output.
     #[arg(long)]
     pub quiet: bool,
@@ -175,6 +187,9 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
         println!("  target words:  {}", args.words);
         println!("  project dir:   {}", project_dir.display());
         println!("  max cycles:    {}", args.max_cycles);
+        println!("  verify sources: {}", !args.no_verify_sources);
+        println!("  outline review: {}", !args.no_outline_review);
+        println!("  second judge:   {}", args.double_judge);
         return Ok(());
     }
 
@@ -186,12 +201,16 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
         target_words: args.words,
         project_dir: project_dir.clone(),
         verbose: !args.quiet,
+        verify_sources: !args.no_verify_sources,
+        review_outline: !args.no_outline_review,
+        double_judge: args.double_judge,
         revise: ReviseConfig {
             max_cycles: args.max_cycles,
             ..ReviseConfig::default()
         },
     };
 
+    llm.reset_usage();
     let report = run_pipeline(llm, &config, &style).await?;
 
     println!("project: {}", report.project_dir.display());
@@ -204,6 +223,26 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
     if let Some(score) = report.state.overall_score {
         println!("overall score: {score:.2}");
     }
+    let unsupported_claims: usize = report
+        .sections
+        .iter()
+        .filter_map(|s| s.evaluations.last())
+        .map(|e| e.claim_counts().2)
+        .sum();
+    if unsupported_claims > 0 {
+        println!("unsupported claims: {unsupported_claims}");
+    }
+    println!("words: {} (target {})", report.word_count, args.words);
+    println!("style: {}", report.style_metrics.summary());
+    if report.verification.total > 0 {
+        println!("sources: {}", report.verification.summary_line());
+    }
+    if let Some(review) = &report.outline_review {
+        if !review.passed() {
+            println!("outline review: weak — {}", review.issue_summary());
+        }
+    }
+    println!("usage: {}", report.usage.summary());
     if report.plateau_detected {
         println!("note: score plateau detected in at least one section");
     }
