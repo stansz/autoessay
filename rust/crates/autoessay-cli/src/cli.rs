@@ -53,6 +53,10 @@ pub struct RunArgs {
     #[arg(long, default_value = "magazine")]
     pub profile: String,
 
+    /// Directory to search for style profile YAML files (default config/styles).
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+
     /// Audience level 1-5 (general -> expert).
     #[arg(long, default_value_t = 3)]
     pub audience: u8,
@@ -151,7 +155,7 @@ async fn cmd_run<C: LlmClient>(args: &RunArgs, llm: &C) -> CliResult<()> {
         ));
     }
 
-    let style = load_profile(&args.profile, None)?;
+    let style = load_profile(&args.profile, args.dir.as_deref())?;
     let project_dir = args
         .project_dir
         .clone()
