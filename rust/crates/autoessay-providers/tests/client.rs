@@ -8,7 +8,7 @@
 
 mod common;
 
-use autoessay_providers::{ApiType, Message, Provider, ProviderError, Tier};
+use autoessay_providers::{ApiType, Message, Provider, ProviderError, ResponseFormat, Tier};
 use common::{anthropic_body, instant_retry, openai_body, registry_from, yaml_pointing_at};
 use serde_json::Value;
 use wiremock::matchers::{method, path};
@@ -518,6 +518,144 @@ async fn openai_200_with_error_object_surfaces_provider_message() {
         }
         other => panic!("expected ResponseParse, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn openai_sends_json_object_response_format() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/deepseek/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_body("{}", "deepseek-chat")))
+        .mount(&server)
+        .await;
+
+    let provider = provider_for(&server, &[("DEEPSEEK_API_KEY", "sk-test")]);
+    provider
+        .chat_with_format(
+            &[Message::user("score this")],
+            Tier::Fast,
+            None,
+            None,
+            None,
+            512,
+            0.2,
+            Some(&ResponseFormat::JsonObject),
+        )
+        .await
+        .unwrap();
+
+    let body = &provider.request_log()[0].body;
+    assert_eq!(body["response_format"], serde_json::json!({"type": "json_object"}));
+}
+
+#[tokio::test]
+async fn openai_sends_json_schema_response_format() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/deepseek/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_body("{}", "deepseek-chat")))
+        .mount(&server)
+        .await;
+
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {"score": {"type": "number"}},
+        "required": ["score"],
+        "additionalProperties": false
+    });
+    let format = ResponseFormat::JsonSchema {
+        name: "eval".to_string(),
+        strict: true,
+        schema,
+    };
+    let provider = provider_for(&server, &[("DEEPSEEK_API_KEY", "sk-test")]);
+    provider
+        .chat_with_format(
+            &[Message::user("score this")],
+            Tier::Fast,
+            None,
+            None,
+            None,
+            512,
+            0.2,
+            Some(&format),
+        )
+        .await
+        .unwrap();
+
+    let body = &provider.request_log()[0].body;
+    assert_eq!(body["response_format"]["type"], "json_schema");
+    assert_eq!(body["response_format"]["json_schema"]["name"], "eval");
+    assert_eq!(body["response_format"]["json_schema"]["strict"], true);
+    assert_eq!(
+        body["response_format"]["json_schema"]["schema"]["required"][0],
+        "score"
+    );
+}
+
+#[tokio::test]
+async fn openai_parses_cached_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/deepseek/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": "deepseek-chat",
+            "choices": [{"message": {"content": "ok", "role": "assistant"}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 64}
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = provider_for(&server, &[("DEEPSEEK_API_KEY", "sk-test")]);
+    let resp = provider
+        .chat(
+            &[Message::user("hi")],
+            Tier::Fast,
+            None,
+            None,
+            None,
+            512,
+            0.2,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.usage.prompt_tokens, 100);
+    assert_eq!(resp.usage.cached_tokens, 64);
+}
+
+#[tokio::test]
+async fn anthropic_parses_cache_read_tokens() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/anthropic/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "content": [{"text": "ok", "type": "text"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 200, "output_tokens": 20, "cache_read_input_tokens": 128}
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = provider_for(&server, &[("ANTHROPIC_API_KEY", "sk-ant-test")]);
+    let resp = provider
+        .chat(
+            &[Message::user("hi")],
+            Tier::Fast,
+            None,
+            None,
+            None,
+            512,
+            0.2,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.usage.prompt_tokens, 200);
+    assert_eq!(resp.usage.cached_tokens, 128);
 }
 
 #[tokio::test]

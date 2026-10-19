@@ -31,8 +31,12 @@ fn project_state_round_trips_with_exact_field_names() {
                 severity: Severity::Minor,
                 note: "needs a source".to_string(),
             }],
+            claims: vec![],
+            style_metrics: None,
+            last_notes: String::new(),
         }],
         overall_score: None,
+        word_count: None,
         plateau_detected: false,
     };
 
@@ -114,7 +118,10 @@ fn project_state_reads_the_documented_example_verbatim() {
     assert_eq!(state.sections[0].status, SectionStatus::Complete);
     assert_eq!(state.sections[0].revision_cycles, 2);
     assert!(state.sections[0].hallucination_flags.is_empty());
+    assert!(state.sections[0].claims.is_empty());
+    assert!(state.sections[0].style_metrics.is_none());
     assert_eq!(state.overall_score, None);
+    assert_eq!(state.word_count, None);
     assert!(!state.plateau_detected);
 }
 
@@ -133,6 +140,7 @@ fn sources_file_round_trips_with_type_field() {
             embedding_vector: Some(vec![0.123, 0.456]),
             verified: true,
             verification_source: Some("crossref".to_string()),
+            verification_note: Some("title match 0.94".to_string()),
         }],
     };
 
@@ -174,5 +182,7 @@ fn section_state_defaults_revision_cycles_to_zero() {
     assert_eq!(s.revision_cycles, 0);
     assert_eq!(s.status, SectionStatus::Drafted);
     assert!(s.hallucination_flags.is_empty());
+    assert!(s.claims.is_empty());
+    assert!(s.style_metrics.is_none());
     assert_eq!(s.scores, Scores::default());
 }

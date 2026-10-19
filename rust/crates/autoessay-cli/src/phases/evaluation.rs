@@ -1,15 +1,21 @@
 //! Phase 3 — Evaluation: score a drafted section on accuracy, coherence, style, sources.
 //!
-//! Ports Python pipeline/evaluation.py verbatim, including the fragile
-//! _parse_eval_response regex/JSON-salvage logic. This is the part the Python
-//! tests guarded most jealously; the Rust port keeps the exact tolerance for
-//! imperfect model output (code fences, wrapping prose, partial JSON) and makes
-//! the failure path an explicit non-panicking failed evaluation (the Python
-//! fallback path).
+//! Ports Python pipeline/evaluation.py, including the fragile _parse_eval_response
+//! tolerance for imperfect model output. Two 2026 additions:
+//!
+//! * structured output: the request asks for a JSON Schema response, so
+//!   providers that support it return schema-shaped JSON. The salvage parser
+//!   remains as the fallback for providers/endpoints without that support.
+//! * a claim-level support matrix: the evaluator decomposes the section into
+//!   claims and marks each supported / partial / unsupported against the
+//!   research notes, instead of only emitting a holistic accuracy score.
 
 use regex::Regex;
 
-use autoessay_core::{EvaluationResult, HallucinationFlag, Severity, StyleProfile};
+use autoessay_core::{
+    ClaimStatus, ClaimSupport, EvaluationResult, HallucinationFlag, Severity, StyleMetrics,
+    StyleProfile,
+};
 
 use crate::docs::load_program_section;
 use crate::error::CliResult;
@@ -39,13 +45,26 @@ Rules:
 4. Source integrity — are citations used appropriately?
 5. Be specific in notes — cite paragraph numbers.";
 
+/// Instructions appended for the claim-level support matrix.
+const CLAIM_MATRIX_RULES: &str = "\n\n## Claim Support Matrix\n\
+    Decompose the section into up to 15 factual claims (skip pure opinion and \
+    rhetorical framing). For each claim return:\n\
+    {\"claim\": \"the claim as stated\", \"source_id\": \"src_01\" (empty string when uncited), \
+    \"status\": \"supported\" | \"partial\" | \"unsupported\", \"note\": \"short reason\"}\n\
+    Rules:\n\
+    - \"supported\" only when the research notes / cited source explicitly supports it.\n\
+    - \"partial\" when the source supports part of the claim or is weaker than the claim implies.\n\
+    - \"unsupported\" when nothing in the provided material supports it.\n\
+    - Do not invent source ids; use only ids that appear in the research notes.";
+
 /// Assemble the evaluator's system prompt with thresholds from the style profile.
-/// Mirrors Python _build_eval_system_prompt.
+/// Mirrors Python _build_eval_system_prompt, plus claim-matrix instructions.
 pub fn build_eval_system_prompt(style: &StyleProfile) -> String {
     let mut program = load_program_section("Phase 3: Evaluation (evaluate.py)");
     if program.is_empty() {
         program = DEFAULT_EVAL_PROGRAM.to_string();
     }
+    program.push_str(CLAIM_MATRIX_RULES);
 
     let accuracy_display = style
         .accuracy_threshold
@@ -70,14 +89,19 @@ pub fn build_eval_system_prompt(style: &StyleProfile) -> String {
 }
 
 /// Assemble the user prompt with the section to evaluate and source material.
-/// Mirrors Python _build_eval_user_prompt.
+///
+/// Research notes come first (they are stable across every section, which keeps
+/// the prompt prefix cache-friendly); the section and its mechanical metrics
+/// follow.
 pub fn build_eval_user_prompt(section_text: &str, research_notes: &str) -> String {
+    let metrics = StyleMetrics::measure(section_text);
     format!(
-        "## Section to Evaluate\n\n{section_text}\n\n## Research Notes (source of truth)\n\n{research_notes}\n\nEvaluate the section and return ONLY the JSON object (no other text)."
+        "## Research Notes (source of truth)\n\n{research_notes}\n\n## Section to Evaluate\n\n{section_text}\n\n## Mechanical Style Metrics\n\n{}\n\nEvaluate the section and return ONLY the JSON object (no other text).",
+        metrics.summary()
     )
 }
 
-/// Score a drafted section on four quality dimensions.
+/// Score a drafted section on four quality dimensions plus a claim matrix.
 ///
 /// Uses a different LLM provider/model than drafting (anti-self-review bias)
 /// when exclude_provider is set.
@@ -88,12 +112,63 @@ pub async fn evaluate_section<C: LlmClient>(
     style: &StyleProfile,
     exclude_provider: Option<&str>,
 ) -> CliResult<EvaluationResult> {
+    evaluate_section_for_role(
+        llm,
+        section_text,
+        research_notes,
+        style,
+        "evaluation",
+        exclude_provider,
+    )
+    .await
+}
+
+/// Evaluate with a second judge role and merge the two evaluations.
+///
+/// The second call is best-effort: if it fails, the primary evaluation is
+/// returned so a judge hiccup cannot break a run. Scores are averaged; the
+/// merged result passes only when both judges pass.
+pub async fn evaluate_section_ensemble<C: LlmClient>(
+    llm: &C,
+    section_text: &str,
+    research_notes: &str,
+    style: &StyleProfile,
+    exclude_provider: Option<&str>,
+    secondary_role: &str,
+) -> CliResult<EvaluationResult> {
+    let primary =
+        evaluate_section(llm, section_text, research_notes, style, exclude_provider).await?;
+    match evaluate_section_for_role(
+        llm,
+        section_text,
+        research_notes,
+        style,
+        secondary_role,
+        None,
+    )
+    .await
+    {
+        Ok(secondary) => Ok(merge_evaluations(primary, secondary)),
+        Err(_) => Ok(primary),
+    }
+}
+
+async fn evaluate_section_for_role<C: LlmClient>(
+    llm: &C,
+    section_text: &str,
+    research_notes: &str,
+    style: &StyleProfile,
+    role: &str,
+    exclude_provider: Option<&str>,
+) -> CliResult<EvaluationResult> {
     let system_prompt = build_eval_system_prompt(style);
     let user_prompt = build_eval_user_prompt(section_text, research_notes);
 
-    let mut request = ChatRequest::for_role("evaluation", vec![ChatMessage::user(user_prompt)])
+    let mut request = ChatRequest::for_role(role, vec![ChatMessage::user(user_prompt)])
         .system(system_prompt)
-        .temperature(0.3); // low temp for consistent scoring
+        .temperature(0.3) // low temp for consistent scoring
+        .max_tokens(2048)
+        .response_format(eval_response_format());
 
     if let Some(exclude) = exclude_provider {
         request = request.exclude(exclude);
@@ -101,6 +176,87 @@ pub async fn evaluate_section<C: LlmClient>(
 
     let resp = llm.chat(request).await?;
     Ok(parse_eval_response(&resp.content, style))
+}
+
+/// Merge a primary and secondary evaluation for ensemble judging.
+pub fn merge_evaluations(
+    primary: EvaluationResult,
+    secondary: EvaluationResult,
+) -> EvaluationResult {
+    let average = |a: f64, b: f64| (a + b) / 2.0;
+    let mut flags = primary.hallucination_flags.clone();
+    flags.extend(secondary.hallucination_flags.clone());
+    let mut claims = primary.claims.clone();
+    claims.extend(secondary.claims.clone());
+    EvaluationResult {
+        accuracy: average(primary.accuracy, secondary.accuracy),
+        coherence: average(primary.coherence, secondary.coherence),
+        style: average(primary.style, secondary.style),
+        source_integrity: average(primary.source_integrity, secondary.source_integrity),
+        overall: if primary.passed() && secondary.passed() {
+            "pass".to_string()
+        } else {
+            "fail".to_string()
+        },
+        hallucination_flags: flags,
+        claims,
+        notes: format!(
+            "{}\n\n--- Second judge ---\n{}",
+            primary.notes, secondary.notes
+        ),
+    }
+}
+
+/// JSON Schema for the evaluator response, sent as `response_format` where the
+/// endpoint supports structured outputs (our OpenRouter models do).
+pub fn eval_response_format() -> autoessay_providers::ResponseFormat {
+    autoessay_providers::ResponseFormat::JsonSchema {
+        name: "evaluation".to_string(),
+        strict: true,
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "accuracy": {"type": "number"},
+                "coherence": {"type": "number"},
+                "style": {"type": "number"},
+                "source_integrity": {"type": "number"},
+                "overall": {"type": "string", "enum": ["pass", "fail"]},
+                "hallucination_flags": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {"type": "string"},
+                            "severity": {"type": "string", "enum": ["critical", "major", "minor"]},
+                            "note": {"type": "string"}
+                        },
+                        "required": ["claim", "severity", "note"],
+                        "additionalProperties": false
+                    }
+                },
+                "claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "claim": {"type": "string"},
+                            "source_id": {"type": "string"},
+                            "status": {"type": "string", "enum": ["supported", "partial", "unsupported"]},
+                            "note": {"type": "string"}
+                        },
+                        "required": ["claim", "source_id", "status", "note"],
+                        "additionalProperties": false
+                    }
+                },
+                "notes": {"type": "string"}
+            },
+            "required": [
+                "accuracy", "coherence", "style", "source_integrity",
+                "overall", "hallucination_flags", "claims", "notes"
+            ],
+            "additionalProperties": false
+        }),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -157,6 +313,38 @@ pub fn parse_eval_response(raw: &str, style: &StyleProfile) -> EvaluationResult 
         })
         .unwrap_or_default();
 
+    let claims: Vec<ClaimSupport> = data
+        .get("claims")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.as_object())
+                .map(|obj| ClaimSupport {
+                    claim: obj
+                        .get("claim")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    source_id: obj
+                        .get("source_id")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string),
+                    status: obj
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .map(parse_claim_status)
+                        .unwrap_or(ClaimStatus::Unsupported),
+                    note: obj
+                        .get("note")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     // Determine pass/fail based on style profile thresholds
     let mut overall = "pass".to_string();
     let gate = style.hallucination_gate;
@@ -194,6 +382,7 @@ pub fn parse_eval_response(raw: &str, style: &StyleProfile) -> EvaluationResult 
         source_integrity: get_number(&data, "source_integrity").unwrap_or(0.0),
         overall,
         hallucination_flags: flags,
+        claims,
         notes: data
             .get("notes")
             .and_then(|v| v.as_str())
@@ -211,6 +400,7 @@ fn failed_with_notes(notes: impl Into<String>) -> EvaluationResult {
         source_integrity: 0.0,
         overall: "fail".to_string(),
         hallucination_flags: Vec::new(),
+        claims: Vec::new(),
         notes: notes.into(),
     }
 }
@@ -296,6 +486,15 @@ fn parse_severity(s: &str) -> Severity {
         "critical" => Severity::Critical,
         "major" => Severity::Major,
         _ => Severity::Minor,
+    }
+}
+
+/// Parse a claim-support status. Unknown labels fall back to Unsupported.
+fn parse_claim_status(s: &str) -> ClaimStatus {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "supported" => ClaimStatus::Supported,
+        "partial" => ClaimStatus::Partial,
+        _ => ClaimStatus::Unsupported,
     }
 }
 

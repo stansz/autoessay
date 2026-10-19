@@ -18,6 +18,9 @@ pub mod orchestrator;
 pub mod phases;
 pub mod sources;
 pub mod styles;
+pub mod verify;
 
 pub use error::{CliError, CliResult};
-pub use llm::{ChatMessage, ChatRequest, LlmClient, LlmResponse, MockLlm, ProviderLlm, Route};
+pub use llm::{
+    ChatMessage, ChatRequest, LlmClient, LlmResponse, MockLlm, ProviderLlm, Route, UsageTotals,
+};

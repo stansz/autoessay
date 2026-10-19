@@ -15,7 +15,7 @@ rust/
   crates/
     autoessay-core/             domain types, no I/O beyond YAML/markdown files
     autoessay-providers/        LLM HTTP layer (registry, routing, retries)
-    autoessay-cli/              pipeline phases, orchestrator, clap CLI
+    autoessay-cli/              pipeline phases, orchestrator, verification, clap CLI
 ```
 
 Dependency direction is one-way: `cli` → `providers` and `cli` → `core`.
@@ -25,8 +25,8 @@ and reasoned about in isolation.
 
 ## The MVP provider setup
 
-The MVP runs on a **single provider key** (OpenRouter) and **two models from
-different families**:
+The MVP runs on a **single provider key** (OpenRouter) and **different model
+families per role**:
 
 ```yaml
 providers:
@@ -36,17 +36,20 @@ providers:
     models:
       fast:  deepseek/deepseek-v4.1-flash    # writer
       smart: xiaomi/mimo-v2.6-pro            # editor
+      judge: z-ai/glm-5.3                    # optional second judge
 roles:
   drafting: fast
   evaluation: smart
+  judge: judge
 ```
 
-Role → tier routing lives in `providers/config.yaml`; the phases no longer
-hard-code provider names. `run_pipeline` calls `LlmClient::route_for_role` for
-`drafting` and `evaluation` and refuses to start if they resolve to the same
-model (`orchestrator.rs::ensure_distinct_models`). That is the production form
-of the anti-self-review rule: a reviewer can never be the writer, even though a
-single API key serves both.
+Role → tier routing lives in `providers.yaml`; the phases no longer hard-code
+provider names. `run_pipeline` calls `LlmClient::route_for_role` for `drafting`
+and `evaluation` and refuses to start if they resolve to the same model
+(`orchestrator.rs::ensure_distinct_models`). With `--double-judge` the `judge`
+route is checked against both as well. That is the production form of the
+anti-self-review rule: a reviewer can never be the writer, even though a single
+API key serves everything.
 
 Direct DeepSeek/Z.ai providers remain supported (uncomment them in
 `providers.yaml`); with more than one provider available, the first available
@@ -57,12 +60,13 @@ provider name in sorted order is used unless a role resolves elsewhere.
 | Python | Rust |
 |---|---|
 | `style/profile.py` | `core/src/style.rs` (`StyleProfile` + voice/gate enums + YAML loader) |
-| `pipeline/evaluation.py` (data model) | `core/src/eval.rs` (`EvaluationResult`, `HallucinationFlag`, `Severity`) |
+| `pipeline/evaluation.py` (data model) | `core/src/eval.rs` (`EvaluationResult`, claims, outline review) |
+| — | `core/src/metrics.rs` (mechanical style metrics) |
 | `pipeline/_utils.py` | `core/src/program.rs` (`load_program_section`) |
 | — (data model in ARCHITECTURE.md) | `core/src/state.rs` (`ProjectState`, `SectionState`, `Source`, `SourcesFile`) |
 | `provider.py` | `providers/src/{config,client,types,error}.rs` |
 | `pipeline/{research,outline,drafting,evaluation,revision}.py` | `cli/src/phases/*.rs` |
-| `cli.py` (12-line stub) | `cli/src/{cli,main}.rs` + `cli/src/orchestrator.rs` |
+| `cli.py` (12-line stub) | `cli/src/{cli,main}.rs` + `orchestrator.rs` + `verify.rs` |
 
 The **prompt text** in `program.md`, `ANTI-SLOP.md`, and the style YAMLs is the
 valuable output of the original project and is ported **verbatim** — do not
@@ -76,31 +80,46 @@ self-contained. `.env` loading was restored from the Python implementation.
 
 1. **Errors are values.** `CoreError` / `ProviderError` via `thiserror`; every
    fallible path is a `Result`. Workspace lints `deny(clippy::unwrap_used,
-   expect_used, panic)` in library code — this is the whole reason for choosing
-   Rust over Python: the compiler enforces that AI-written code cannot silently
-   drop a failure path. Tests opt out of those lints explicitly.
+   expect_used, panic)` in library code. Tests opt out explicitly.
 2. **`LlmClient` trait for offline testing.** Every phase is
    `async fn ...(llm: &impl LlmClient, ...)`. `ProviderLlm` wraps the real
-   `autoessay_providers::Provider`; `MockLlm` serves canned responses and
-   records requests. This is the compiler-enforced analogue of the Python
-   tests' patch-then-Mock. **All 116 tests run with no network and no API keys.**
-3. **Role → tier routing plus a model-identity check** replaces the old
-   hard-coded `exclude="deepseek"`; see "The MVP provider setup" above.
+   provider; `MockLlm` serves canned responses and records requests. **All 152
+   tests run with no network and no API keys.**
+3. **Role → tier routing plus model-identity checks** replace hard-coded
+   provider exclusion; see "The MVP provider setup".
 4. **Retries return the final error**, never swallow it: {429,500,502,503,504}
    or connect/timeout, 4 attempts, `tokio::time::sleep` 2s/4s/8s.
-5. **The orchestrator is new.** The Python never wired the phases together;
-   `cli/src/orchestrator.rs` does research → outline → per-section draft →
-   evaluate → revise-until-pass. It writes `state.json` after each section,
-   `sources.json` after research, persists each draft before evaluation, and
-   assembles `essay.md`. It does not shell out to git — the layout is ready for
-   per-phase commits as a later step.
-6. **The eval parser is the fragile seam.** Model output is imperfect, so
-   `phases/evaluation.rs` salvages JSON from code fences, wrapping prose, and
-   trailing text (brace-balanced salvage beyond the Python's greedy regex), and
-   returns a clear failed `EvaluationResult` — never a panic — on malformed input.
-7. **Length and audience reach the prompts.** `--words` is divided across
-   sections and injected into drafting/revision; `--audience` is injected as
-   level 1–5, instead of being metadata only.
+5. **The orchestrator is new.** The Python never wired the phases together. It
+   now runs research → Crossref verification → outline → outline-review gate →
+   per-section draft/evaluate/revise → metrics → assembly, persisting state
+   after each section and each draft before evaluation. It does not shell out
+   to git — the layout is ready for per-phase commits as a later step.
+6. **The eval parser is the fragile seam, so we asked for structure.** Requests
+   carry an OpenAI-compatible JSON Schema `response_format`; our OpenRouter
+   models support structured outputs. The brace-balanced salvage parser remains
+   as the fallback for endpoints that do not.
+7. **Claim-level support matrix.** The evaluator decomposes each section into
+   claims and marks support against the research notes. This is the inspectable
+   version of "hallucination detection": per-claim verdicts feed the revision
+   brief and the CLI summary instead of a single accuracy number.
+8. **Independent source verification.** `verify.rs` resolves DOIs/titles via
+   Crossref behind a `MetadataResolver` trait. The important verdict is
+   `mismatch` (a DOI that resolves to a *different* work), not just "not found";
+   verification status is injected into every evaluator prompt.
+9. **Mechanical metrics beside the LLM judge.** Readability, sentence-length
+   variance, passive ratio, hedges, nominalizations and first-person/contraction
+   counts are computed in Rust and included in the evaluator prompt, so the
+   judge has objective signals and the report has regression checks.
+10. **Cache-friendly prompt ordering.** Research notes (stable across all
+    sections) come before section-specific material; evaluation prompts put
+    research before the section. This makes provider prompt caching effective,
+    and the CLI reports cached-token counts.
+11. **Out-of-loop review commands.** `improve` turns recurring evaluation
+    findings into reviewable patch proposals (GEIS-style improvement loop, but
+    human-applied); `panel` runs the three-persona reader panel over the
+    finished essay.
+12. **Length guard.** Writer calls continue when `finish_reason` reports a
+    token-limit stop, so a budget cut cannot silently truncate a section.
 
 ## Build
 

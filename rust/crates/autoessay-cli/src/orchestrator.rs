@@ -1,18 +1,20 @@
 //! The end-to-end orchestrator — the piece the Python never had.
 //!
-//! Runs research -> outline -> per-section draft -> evaluate -> revise-until-pass
-//! -> write out, persisting state.json and sources.json after every phase and
-//! laying the project out in the "GitHub as review surface" format from
-//! ARCHITECTURE.md:
+//! Runs research -> source verification -> outline (with review gate) ->
+//! per-section draft -> evaluate -> revise-until-pass -> metrics -> assemble,
+//! persisting state.json and sources.json along the way and laying the project
+//! out in the "GitHub as review surface" format from ARCHITECTURE.md:
 //!
 //! <project>/
 //!   seed.md
 //!   research.md
 //!   outline.md
+//!   outline-review.json
 //!   sources.json
 //!   state.json
 //!   sections/sec_01.md ...
 //!   revisions/ ...
+//!   essay.md
 //!
 //! Git commits are a later task; this module only writes the files in that
 //! layout and never shells out to git.
@@ -20,17 +22,21 @@
 use std::path::{Path, PathBuf};
 
 use autoessay_core::{
-    EvaluationResult, Phase, ProjectState, Scores, SectionState, SectionStatus, SourcesFile,
-    StyleProfile,
+    EvaluationResult, OutlineReview, Phase, ProjectState, Scores, SectionState, SectionStatus,
+    SourcesFile, StyleMetrics, StyleProfile,
 };
 
 use crate::error::{CliError, CliResult};
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, UsageTotals};
 use crate::phases::{
     draft_section, evaluate_section, generate_outline, generate_research, generate_revision_brief,
-    mean_score, parse_outline, revise_section, revise_until_pass, ReviseConfig, SectionBrief,
+    mean_score, parse_outline, review_outline, revise_outline, revise_section, revise_until_pass,
+    ReviseConfig, SectionBrief,
 };
 use crate::sources::extract_sources;
+use crate::verify::{
+    verification_context, verify_sources, CrossrefResolver, VerificationSummary,
+};
 
 /// Knobs for a full pipeline run.
 #[derive(Debug, Clone)]
@@ -49,6 +55,12 @@ pub struct PipelineConfig {
     pub project_dir: PathBuf,
     /// Print progress to stdout.
     pub verbose: bool,
+    /// Verify sources against Crossref after research.
+    pub verify_sources: bool,
+    /// Review the outline and regenerate it once when weak.
+    pub review_outline: bool,
+    /// Ask a second (different) model to score evaluations, then average.
+    pub double_judge: bool,
     /// Revise-loop configuration (max cycles, plateau, anti-self-review).
     pub revise: ReviseConfig,
 }
@@ -59,9 +71,18 @@ pub struct PipelineReport {
     pub project_dir: PathBuf,
     pub research_md: String,
     pub outline_md: String,
+    pub outline_review: Option<OutlineReview>,
     pub sections: Vec<SectionReport>,
     /// The assembled markdown document written to `essay.md`.
     pub essay_md: String,
+    /// Mechanical metrics for the assembled essay.
+    pub style_metrics: StyleMetrics,
+    /// Word count of the assembled essay.
+    pub word_count: u32,
+    /// Source-verification counts.
+    pub verification: VerificationSummary,
+    /// Accumulated token usage for the whole run.
+    pub usage: UsageTotals,
     pub state: ProjectState,
     pub sources: SourcesFile,
     pub plateau_detected: bool,
@@ -74,6 +95,7 @@ pub struct SectionReport {
     pub title: String,
     pub final_text: String,
     pub evaluations: Vec<EvaluationResult>,
+    pub style_metrics: StyleMetrics,
     pub cycles: u32,
     pub passed: bool,
     pub plateau: bool,
@@ -85,7 +107,7 @@ pub async fn run_pipeline<C: LlmClient>(
     config: &PipelineConfig,
     style: &StyleProfile,
 ) -> CliResult<PipelineReport> {
-    ensure_distinct_models(llm)?;
+    ensure_distinct_models(llm, config.double_judge)?;
 
     let dir = &config.project_dir;
     std::fs::create_dir_all(dir)?;
@@ -100,6 +122,7 @@ pub async fn run_pipeline<C: LlmClient>(
         target_words: config.target_words,
         sections: Vec::new(),
         overall_score: None,
+        word_count: None,
         plateau_detected: false,
     };
 
@@ -112,22 +135,96 @@ pub async fn run_pipeline<C: LlmClient>(
     let research_md =
         generate_research(llm, &config.seed, config.notes.as_deref(), Some(style)).await?;
     write_file(&dir.join("research.md"), &research_md)?;
-    let sources = extract_sources(&research_md);
-    write_file(&dir.join("sources.json"), &sources.to_json().map_err(map_core_err)?)?;
+    let mut sources = extract_sources(&research_md);
+
+    // ---- Phase 1a: verify sources ----
+    let mut verification = VerificationSummary::default();
+    if config.verify_sources && !sources.sources.is_empty() {
+        progress(config, "Phase 1a: Verifying sources (Crossref)");
+        let resolver = CrossrefResolver::new();
+        verification = verify_sources(&mut sources, &resolver).await;
+        progress(config, &verification.summary_line());
+    }
+    write_file(
+        &dir.join("sources.json"),
+        &sources.to_json().map_err(map_core_err)?,
+    )?;
+
+    // Prompts use the research notes plus an explicit verification block, so the
+    // evaluator knows which sources are independently confirmed.
+    let research_context = with_verification(&research_md, &sources);
+
     state.phase = Phase::Research;
     state.iteration += 1;
     write_state(&state, dir)?;
 
     // ---- Phase 1b: outline ----
     progress(config, "Phase 1b: Outline");
-    let outline_md = generate_outline(llm, &research_md, Some(style)).await?;
+    let mut outline_md = generate_outline(llm, &research_context, Some(style)).await?;
     write_file(&dir.join("outline.md"), &outline_md)?;
-    let parsed = parse_outline(&outline_md);
+    let mut parsed = parse_outline(&outline_md);
     if parsed.sections.is_empty() {
         return Err(CliError::project(
             "outline contained no numbered sections under 'Argument Structure'; cannot draft",
         ));
     }
+
+    // ---- Phase 1c: outline review gate ----
+    let mut outline_review: Option<OutlineReview> = None;
+    if config.review_outline {
+        progress(config, "Phase 1c: Outline review");
+        match review_outline(llm, &outline_md, &research_context, style).await {
+            Ok(review) => {
+                if !review.passed() {
+                    progress(
+                        config,
+                        &format!("Outline needs work: {}", review.issue_summary()),
+                    );
+                    match revise_outline(
+                        llm,
+                        &outline_md,
+                        &review,
+                        &research_context,
+                        style,
+                    )
+                    .await
+                    {
+                        Ok(revised) => {
+                            let reparsed = parse_outline(&revised);
+                            if reparsed.sections.is_empty() {
+                                progress(
+                                    config,
+                                    "revised outline had no section map; keeping the original",
+                                );
+                            } else {
+                                outline_md = revised;
+                                parsed = reparsed;
+                                write_file(&dir.join("outline.md"), &outline_md)?;
+                                progress(config, "Outline regenerated");
+                            }
+                        }
+                        Err(error) => progress(
+                            config,
+                            &format!("outline revision failed ({error}); keeping the original"),
+                        ),
+                    }
+                } else {
+                    progress(config, "Outline passed review");
+                }
+                write_file(
+                    &dir.join("outline-review.json"),
+                    &serde_json::to_string_pretty(&review)
+                        .map_err(|e| CliError::Project(format!("serialize outline review: {e}")))?,
+                )?;
+                outline_review = Some(review);
+            }
+            Err(error) => progress(
+                config,
+                &format!("outline review failed ({error}); continuing without the gate"),
+            ),
+        }
+    }
+
     state.sections = parsed
         .sections
         .iter()
@@ -139,6 +236,9 @@ pub async fn run_pipeline<C: LlmClient>(
             scores: Scores::default(),
             revision_cycles: 0,
             hallucination_flags: Vec::new(),
+            claims: Vec::new(),
+            style_metrics: None,
+            last_notes: String::new(),
         })
         .collect();
     state.phase = Phase::Outline;
@@ -163,7 +263,7 @@ pub async fn run_pipeline<C: LlmClient>(
             llm,
             &section.title,
             &section.purpose,
-            &research_md,
+            &research_context,
             style,
             Some(&section.sources),
             if previous.is_empty() {
@@ -182,8 +282,11 @@ pub async fn run_pipeline<C: LlmClient>(
 
         let mut revise_config = config.revise.clone();
         revise_config.brief = section_brief;
+        if config.double_judge {
+            revise_config.judge_role = Some("judge".to_string());
+        }
 
-        let outcome = revise_until_pass(llm, &draft, &research_md, style, &revise_config).await?;
+        let outcome = revise_until_pass(llm, &draft, &research_context, style, &revise_config).await?;
 
         // Write the final section file (title heading + body).
         let body = format!("## {}\n\n{}", section.title, outcome.final_section);
@@ -196,6 +299,8 @@ pub async fn run_pipeline<C: LlmClient>(
                 .join(format!("{id}-v{}.md", outcome.history.len()));
             write_file(&rev_path, &body)?;
         }
+
+        let metrics = StyleMetrics::measure(&outcome.final_section);
 
         // Update state for this section.
         if let Some(entry) = state.sections.iter_mut().find(|s| s.id == id) {
@@ -213,7 +318,10 @@ pub async fn run_pipeline<C: LlmClient>(
                     source_integrity: last.source_integrity,
                 };
                 entry.hallucination_flags = last.hallucination_flags.clone();
+                entry.claims = last.claims.clone();
+                entry.last_notes = last.notes.clone();
             }
+            entry.style_metrics = Some(metrics.clone());
         }
 
         if outcome.plateau_detected {
@@ -226,6 +334,7 @@ pub async fn run_pipeline<C: LlmClient>(
             title: section.title.clone(),
             final_text: body,
             evaluations: outcome.history,
+            style_metrics: metrics,
             cycles: outcome.cycles_run,
             passed: outcome.passed,
             plateau: outcome.plateau_detected,
@@ -239,9 +348,12 @@ pub async fn run_pipeline<C: LlmClient>(
     // ---- Assemble the finished document ----
     let essay_md = assemble_essay(config, &reports);
     write_file(&dir.join("essay.md"), &essay_md)?;
+    let essay_metrics = StyleMetrics::measure(&essay_md);
+    let word_count = essay_metrics.words;
 
     // ---- Final state ----
     state.plateau_detected = plateau_any;
+    state.word_count = Some(word_count);
     let means: Vec<f64> = reports
         .iter()
         .filter_map(|r| r.evaluations.last().map(mean_score))
@@ -253,14 +365,26 @@ pub async fn run_pipeline<C: LlmClient>(
     state.iteration = reports.iter().map(|r| r.cycles).sum();
     write_state(&state, dir)?;
 
-    progress(config, "Pipeline complete");
+    progress(
+        config,
+        &format!(
+            "Pipeline complete: {word_count} words (target {}), {}",
+            config.target_words,
+            essay_metrics.summary()
+        ),
+    );
 
     Ok(PipelineReport {
         project_dir: dir.clone(),
         research_md,
         outline_md,
+        outline_review,
         sections: reports,
         essay_md,
+        style_metrics: essay_metrics,
+        word_count,
+        verification,
+        usage: llm.usage_totals(),
         state,
         sources,
         plateau_detected: plateau_any,
@@ -275,7 +399,7 @@ pub async fn evaluate_project_section<C: LlmClient>(
     section_id: &str,
     style: &StyleProfile,
 ) -> CliResult<EvaluationResult> {
-    let research = read_file(&project_dir.join("research.md"))?;
+    let research = research_context_from_project(project_dir)?;
     let section_body =
         read_file(&project_dir.join("sections").join(format!("{section_id}.md")))?;
     let section_text = strip_leading_heading(&section_body);
@@ -291,7 +415,7 @@ pub async fn revise_project_section<C: LlmClient>(
     feedback: &str,
     style: &StyleProfile,
 ) -> CliResult<SectionReport> {
-    let research = read_file(&project_dir.join("research.md"))?;
+    let research = research_context_from_project(project_dir)?;
     let section_path = project_dir.join("sections").join(format!("{section_id}.md"));
     let section_body = read_file(&section_path)?;
     let section_text = strip_leading_heading(&section_body);
@@ -315,6 +439,7 @@ pub async fn revise_project_section<C: LlmClient>(
     let revised = revise_section(llm, &section_text, &brief, &research, style, None).await?;
     let body = format!("## {title}\n\n{revised}");
     write_file(&section_path, &body)?;
+    let metrics = StyleMetrics::measure(&revised);
 
     // Refresh state.json for this section.
     let state_path = project_dir.join("state.json");
@@ -331,6 +456,9 @@ pub async fn revise_project_section<C: LlmClient>(
                         source_integrity: evaluation.source_integrity,
                     };
                     entry.hallucination_flags = evaluation.hallucination_flags.clone();
+                    entry.claims = evaluation.claims.clone();
+                    entry.last_notes = evaluation.notes.clone();
+                    entry.style_metrics = Some(metrics.clone());
                 }
                 write_state(&state, project_dir)?;
             }
@@ -342,6 +470,7 @@ pub async fn revise_project_section<C: LlmClient>(
         title,
         final_text: body,
         evaluations: vec![evaluation],
+        style_metrics: metrics,
         cycles: 1,
         passed: false,
         plateau: false,
@@ -352,24 +481,69 @@ pub async fn revise_project_section<C: LlmClient>(
 // Helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Refuse to run when drafting and evaluation resolve to the same model.
+/// Refuse to run when the writer and any judge resolve to the same model.
 ///
 /// This is the production form of the anti-self-review rule: with a single
-/// provider (OpenRouter), the two roles must still land on different models.
-/// Mocks that cannot report routes (offline tests) skip the check.
-fn ensure_distinct_models<C: LlmClient>(llm: &C) -> CliResult<()> {
+/// provider (OpenRouter), the roles must still land on different models. Mocks
+/// that cannot report routes (offline tests) skip the check.
+fn ensure_distinct_models<C: LlmClient>(llm: &C, double_judge: bool) -> CliResult<()> {
     let drafting = llm.route_for_role("drafting");
     let evaluation = llm.route_for_role("evaluation");
-    match (drafting, evaluation) {
+    match (&drafting, &evaluation) {
         (Some(drafting), Some(evaluation)) if drafting == evaluation => {
-            Err(CliError::invalid_input(format!(
+            return Err(CliError::invalid_input(format!(
                 "anti-self-review check failed: drafting and evaluation both resolve to '{}' via '{}'. \
                  Set a different tier/model for the evaluation role in providers.yaml.",
                 drafting.model, drafting.provider
-            )))
+            )));
         }
-        _ => Ok(()),
+        _ => {}
     }
+
+    if double_judge && (drafting.is_some() || evaluation.is_some()) {
+        // With no keys at all every route is None; skip this check so the later
+        // "no available providers" error is the one the user sees.
+        let judge = llm.route_for_role("judge").ok_or_else(|| {
+            CliError::invalid_input(
+                "--double-judge requires a `judge` role/model in providers.yaml",
+            )
+        })?;
+        for (role, route) in [("drafting", &drafting), ("evaluation", &evaluation)] {
+            if let Some(route) = route {
+                if route == &judge {
+                    return Err(CliError::invalid_input(format!(
+                        "judge model '{}' must differ from the {role} model '{}'",
+                        judge.model, route.model
+                    )));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Append the source-verification block to the research notes used in prompts.
+fn with_verification(research_md: &str, sources: &SourcesFile) -> String {
+    let block = verification_context(sources);
+    if block.is_empty() {
+        research_md.to_string()
+    } else {
+        format!("{}\n\n{}", research_md.trim_end(), block)
+    }
+}
+
+/// Read research notes and, when present, the verification block from sources.json.
+fn research_context_from_project(project_dir: &Path) -> CliResult<String> {
+    let research = read_file(&project_dir.join("research.md"))?;
+    let sources_path = project_dir.join("sources.json");
+    if !sources_path.exists() {
+        return Ok(research);
+    }
+    let json = read_file(&sources_path)?;
+    let sources = SourcesFile::from_json(&json)
+        .map_err(|e| CliError::Project(format!("failed to parse sources.json: {e}")))?;
+    Ok(with_verification(&research, &sources))
 }
 
 /// Per-section word budget and audience for prompts.

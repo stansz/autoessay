@@ -19,6 +19,7 @@ providers:
     models:
       fast: deepseek/deepseek-v4.1-flash        # writer: drafting, revision
       smart: xiaomi/mimo-v2.6-pro               # editor: research, outline, evaluation, brief
+      judge: z-ai/glm-5.3                       # optional second judge (--double-judge)
 
   # deepseek:                                   # direct API, optional
   #   base_url: https://api.deepseek.com/v1
@@ -40,8 +41,10 @@ providers:
 roles:
   research: smart
   outline: smart
+  outline_review: smart
   drafting: fast
   evaluation: smart
+  judge: judge
   reader_panel: smart
   revision: fast
   tightening: fast

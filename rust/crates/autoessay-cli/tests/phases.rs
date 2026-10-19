@@ -6,13 +6,16 @@
 //! test_revision.py mock-patching style, but with clean dependency injection:
 //! every phase takes &impl LlmClient, and here we pass a recording MockLlm.
 
-use autoessay_cli::llm::MockLlm;
+use autoessay_cli::llm::{LlmResponse, MockLlm};
 use autoessay_cli::phases::{
-    build_system_prompt, build_user_prompt, draft_section, generate_outline, generate_research,
-    generate_revision_brief, revise_section, revise_until_pass, ReviseConfig, SectionBrief,
+    build_eval_user_prompt, build_system_prompt, build_user_prompt, draft_section,
+    evaluate_section, evaluate_section_ensemble, generate_outline, generate_research,
+    generate_revision_brief, parse_outline_review, review_outline, revise_outline, revise_section,
+    revise_until_pass, ReviseConfig, SectionBrief,
 };
 use autoessay_cli::styles::load_profile;
-use autoessay_core::{EvaluationResult, StyleProfile};
+use autoessay_core::{ClaimStatus, ClaimSupport, EvaluationResult, StyleProfile};
+use autoessay_providers::{ResponseFormat, Usage};
 
 fn magazine() -> StyleProfile {
     load_profile("magazine", None).expect("magazine profile")
@@ -263,6 +266,7 @@ fn failed_eval() -> EvaluationResult {
         source_integrity: 8.0,
         overall: "fail".to_string(),
         hallucination_flags: vec![],
+        claims: vec![],
         notes: "Paragraph 1 is strong but needs more evidence. Lede is weak.".to_string(),
     }
 }
@@ -407,6 +411,7 @@ async fn revise_until_pass_detects_plateau_and_stops_early() {
         max_cycles: 5,
         exclude_provider: None,
         brief: None,
+        judge_role: None,
         plateau_epsilon: 0.05,
         plateau_patience: 2,
     };
@@ -423,4 +428,195 @@ async fn revise_until_pass_detects_plateau_and_stops_early() {
         outcome.history.len() < cfg.max_cycles as usize,
         "stopped early"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Length guard / continuation
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn raw_response(content: &str, finish_reason: &str) -> LlmResponse {
+    LlmResponse {
+        content: content.to_string(),
+        model: "mock-model".to_string(),
+        provider: "mock".to_string(),
+        usage: Usage::default(),
+        finish_reason: finish_reason.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn drafting_continues_when_output_hits_the_token_limit() {
+    let mock = MockLlm::from_responses(vec![
+        raw_response("The first half of the section.", "length"),
+        raw_response(" The rest of the section.", "stop"),
+    ]);
+    let out = draft_section(&mock, "T", "P", RESEARCH, &magazine(), None, None, None)
+        .await
+        .expect("draft");
+    assert_eq!(out, "The first half of the section. The rest of the section.");
+    assert_eq!(mock.call_count(), 2, "truncated output must be continued");
+    let requests = mock.requests();
+    let continuation = &requests[1];
+    assert!(
+        continuation
+            .messages
+            .iter()
+            .any(|m| m.content.contains("Continue exactly where the text stopped")),
+        "continuation prompt missing"
+    );
+    assert!(
+        continuation
+            .messages
+            .iter()
+            .any(|m| m.role == "assistant"),
+        "partial output must be sent back as an assistant message"
+    );
+}
+
+#[tokio::test]
+async fn drafting_does_not_continue_when_finish_reason_is_stop() {
+    let mock = MockLlm::always("Complete section.");
+    let out = draft_section(&mock, "T", "P", RESEARCH, &magazine(), None, None, None)
+        .await
+        .expect("draft");
+    assert_eq!(out, "Complete section.");
+    assert_eq!(mock.call_count(), 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Structured evaluation, claims, ensemble
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EVAL_JSON: &str = r#"{
+  "accuracy": 8.0, "coherence": 8.0, "style": 9.0, "source_integrity": 7.0,
+  "overall": "pass", "hallucination_flags": [],
+  "claims": [
+    {"claim": "Remote work raised productivity 13%", "source_id": "src_01", "status": "supported", "note": "matches study"},
+    {"claim": "Every company lost culture", "source_id": "", "status": "unsupported", "note": "overgeneralized"}
+  ],
+  "notes": "Solid."
+}"#;
+
+#[tokio::test]
+async fn evaluation_requests_structured_output_and_parses_claims() {
+    let mock = MockLlm::always(EVAL_JSON);
+    let result = evaluate_section(&mock, "Section text.", RESEARCH, &magazine(), None)
+        .await
+        .expect("evaluate");
+    let request = mock.last_request().expect("request");
+    assert_eq!(request.role, "evaluation");
+    match request.response_format {
+        Some(ResponseFormat::JsonSchema { name, strict, .. }) => {
+            assert_eq!(name, "evaluation");
+            assert!(strict);
+        }
+        other => panic!("expected a JSON schema response format, got {other:?}"),
+    }
+    assert_eq!(result.claims.len(), 2);
+    assert_eq!(result.claims[0].status, ClaimStatus::Supported);
+    assert_eq!(result.claims[1].status, ClaimStatus::Unsupported);
+    assert_eq!(result.claim_counts(), (1, 0, 1));
+}
+
+#[tokio::test]
+async fn ensemble_evaluation_averages_scores_and_fails_if_either_fails() {
+    let fail_json = r#"{"accuracy": 4.0, "coherence": 4.0, "style": 4.0, "source_integrity": 4.0, "overall": "fail", "hallucination_flags": [{"claim": "x", "severity": "major", "note": "unsupported"}], "claims": [], "notes": "Weak."}"#;
+    let mock = MockLlm::sequence(vec![EVAL_JSON.to_string(), fail_json.to_string()]);
+    let result = evaluate_section_ensemble(
+        &mock,
+        "Section text.",
+        RESEARCH,
+        &magazine(),
+        None,
+        "judge",
+    )
+    .await
+    .expect("ensemble");
+    assert_eq!(mock.call_count(), 2);
+    let requests = mock.requests();
+    assert_eq!(requests[0].role, "evaluation");
+    assert_eq!(requests[1].role, "judge");
+    assert_eq!(result.accuracy, 6.0);
+    assert_eq!(result.overall, "fail");
+    assert_eq!(result.hallucination_flags.len(), 1);
+    assert!(result.notes.contains("Second judge"));
+}
+
+#[tokio::test]
+async fn revision_brief_includes_the_claim_matrix() {
+    let mock = MockLlm::always("1. Fix it.");
+    let mut evaluation = failed_eval();
+    evaluation.claims = vec![ClaimSupport {
+        claim: "unchecked claim about 2020".to_string(),
+        source_id: None,
+        status: ClaimStatus::Unsupported,
+        note: "nothing supports it".to_string(),
+    }];
+    generate_revision_brief(&mock, "Section text", &evaluation, &magazine())
+        .await
+        .expect("brief");
+    let text = mock.last_request().expect("request").all_text();
+    assert!(text.contains("Claim Support"));
+    assert!(text.contains("unchecked claim about 2020"));
+    assert!(text.contains("unsupported: 1"));
+}
+
+#[test]
+fn eval_prompt_includes_mechanical_style_metrics() {
+    let prompt = build_eval_user_prompt("Short sentence. Another one.", RESEARCH);
+    assert!(prompt.contains("Mechanical Style Metrics"));
+    assert!(prompt.contains("Flesch"));
+    // research stays at the front for prompt-cache reuse
+    assert!(
+        prompt.find("Research Notes").unwrap() < prompt.find("Section to Evaluate").unwrap()
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Outline review gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+const OUTLINE_REVIEW_JSON: &str = r#"{
+  "thesis": 4.0, "structure": 5.0, "source_coverage": 4.0, "counterargument": 3.0,
+  "overall": "fail",
+  "issues": ["thesis is a fact, not a claim", "no counterargument section"],
+  "notes": "Needs a real argument."
+}"#;
+
+const OUTLINE: &str = "## Thesis\nRemote work changed culture.\n\n## Argument Structure\n1. **The Promise** — Set up the expectation | Sources: [src_01]\n2. **What We Lost** — Show the cost | Sources: [src_02]";
+
+#[tokio::test]
+async fn outline_review_is_parsed_and_scored() {
+    let review = parse_outline_review(OUTLINE_REVIEW_JSON);
+    assert!(!review.passed());
+    assert_eq!(review.thesis, 4.0);
+    assert!(review.issue_summary().contains("counterargument"));
+}
+
+#[tokio::test]
+async fn review_outline_requests_structured_output() {
+    let mock = MockLlm::always(OUTLINE_REVIEW_JSON);
+    let review = review_outline(&mock, OUTLINE, RESEARCH, &magazine())
+        .await
+        .expect("review");
+    assert!(!review.passed());
+    let request = mock.last_request().expect("request");
+    assert_eq!(request.role, "outline_review");
+    assert!(matches!(
+        request.response_format,
+        Some(ResponseFormat::JsonSchema { .. })
+    ));
+}
+
+#[tokio::test]
+async fn revise_outline_uses_the_outline_role_and_includes_issues() {
+    let mock = MockLlm::always("## Thesis\nBetter thesis.\n\n## Argument Structure\n1. **New Section** — Purpose | Sources: [src_01]");
+    let review = parse_outline_review(OUTLINE_REVIEW_JSON);
+    let revised = revise_outline(&mock, OUTLINE, &review, RESEARCH, &magazine())
+        .await
+        .expect("revise");
+    assert!(revised.contains("Better thesis"));
+    let request = mock.last_request().expect("request");
+    assert_eq!(request.role, "outline");
+    assert!(request.all_text().contains("no counterargument section"));
 }

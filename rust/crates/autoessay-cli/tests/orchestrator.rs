@@ -56,6 +56,26 @@ Culture moved, it did not die.";
 
 const PASS_JSON: &str = r#"{"accuracy": 9.0, "coherence": 9.0, "style": 9.0, "source_integrity": 9.0, "overall": "pass", "hallucination_flags": [], "notes": "Strong."}"#;
 
+const OUTLINE_FAIL_JSON: &str = r#"{
+  "thesis": 4.0, "structure": 5.0, "source_coverage": 4.0, "counterargument": 3.0,
+  "overall": "fail",
+  "issues": ["thesis is a fact, not a claim", "no counterargument section"],
+  "notes": "Needs a real argument."
+}"#;
+
+const REVISED_OUTLINE_MD: &str = "## Thesis
+Remote work did not kill culture; it relocated it.
+
+## Argument Structure
+1. **The Revised Promise** — Set up the 2019 expectation | Sources: [src_01]
+2. **The Revised Cost** — Show the collaboration cost | Sources: [src_02]
+
+## Counterargument Section
+Some companies thrived remote-first.
+
+## Conclusion Arc
+Culture moved, it did not die.";
+
 /// Script the mock so the pipeline can run end to end:
 /// research, outline, then per section: draft, evaluate(pass).
 fn scripted_mock(section_count: usize) -> MockLlm {
@@ -83,6 +103,9 @@ async fn orchestrator_end_to_end_produces_expected_files() {
         target_words: 2500,
         project_dir: dir.clone(),
         verbose: false,
+        verify_sources: false,
+        review_outline: false,
+        double_judge: false,
         revise: ReviseConfig {
             max_cycles: 3,
             ..ReviseConfig::default()
@@ -142,6 +165,55 @@ async fn orchestrator_end_to_end_produces_expected_files() {
 
     assert_eq!(report.sections.len(), 2);
     assert!(report.sections.iter().all(|s| s.passed));
+    assert!(report.word_count > 0, "word count should be reported");
+    assert_eq!(report.style_metrics.words, report.word_count);
+    assert!(report.usage.calls > 0, "usage should record the calls made");
+    assert_eq!(report.verification.total, 0);
+    assert!(report.outline_review.is_none());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn outline_review_gate_regenerates_a_weak_outline() {
+    let dir = temp_dir();
+    let style = load_profile("magazine", None).expect("magazine");
+    let mock = MockLlm::sequence(vec![
+        RESEARCH_MD.to_string(),
+        OUTLINE_MD.to_string(),
+        OUTLINE_FAIL_JSON.to_string(),  // outline review -> fail
+        REVISED_OUTLINE_MD.to_string(), // revised outline
+        "Drafted section body.".to_string(),
+        PASS_JSON.to_string(),
+        "Drafted section body.".to_string(),
+        PASS_JSON.to_string(),
+    ]);
+
+    let config = PipelineConfig {
+        seed: "remote work and culture".to_string(),
+        notes: None,
+        profile_name: "magazine".to_string(),
+        audience_level: 3,
+        target_words: 1200,
+        project_dir: dir.clone(),
+        verbose: false,
+        verify_sources: false,
+        review_outline: true,
+        double_judge: false,
+        revise: ReviseConfig::default(),
+    };
+
+    let report = run_pipeline(&mock, &config, &style)
+        .await
+        .expect("pipeline with outline gate");
+
+    let review = report.outline_review.expect("outline review recorded");
+    assert!(!review.passed());
+    assert_eq!(report.sections.len(), 2);
+    assert!(report.sections[0].title.contains("Revised"));
+    assert!(dir.join("outline-review.json").exists());
+    let outline = std::fs::read_to_string(dir.join("outline.md")).expect("outline");
+    assert!(outline.contains("The Revised Promise"));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -171,6 +243,9 @@ async fn orchestrator_writes_revisions_when_multiple_cycles() {
         target_words: 2500,
         project_dir: dir.clone(),
         verbose: false,
+        verify_sources: false,
+        review_outline: false,
+        double_judge: false,
         revise: ReviseConfig {
             max_cycles: 3,
             exclude_provider: None,
@@ -209,6 +284,9 @@ async fn orchestrator_errors_on_outline_without_sections() {
         target_words: 500,
         project_dir: dir.clone(),
         verbose: false,
+        verify_sources: false,
+        review_outline: false,
+        double_judge: false,
         revise: ReviseConfig::default(),
     };
 
@@ -251,6 +329,9 @@ async fn orchestrator_refuses_same_drafting_and_evaluation_model() {
         target_words: 500,
         project_dir: dir.clone(),
         verbose: false,
+        verify_sources: false,
+        review_outline: false,
+        double_judge: false,
         revise: ReviseConfig::default(),
     };
 

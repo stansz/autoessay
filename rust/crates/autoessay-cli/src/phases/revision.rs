@@ -13,7 +13,7 @@ use crate::error::CliResult;
 use crate::llm::{ChatMessage, ChatRequest, LlmClient};
 
 use super::drafting::SectionBrief;
-use super::evaluation::{evaluate_section, format_score};
+use super::evaluation::{evaluate_section, evaluate_section_ensemble, format_score};
 
 /// Fallback revision-brief instructions if program.md is unavailable.
 /// Verbatim from Python _default_revision_brief_program.
@@ -84,8 +84,25 @@ pub async fn generate_revision_brief<C: LlmClient>(
         flags_text
     };
 
+    let (supported, partial, unsupported) = evaluation.claim_counts();
+    let unsupported_text = evaluation
+        .claims
+        .iter()
+        .filter(|c| c.status == autoessay_core::ClaimStatus::Unsupported)
+        .map(|c| format!("- {} {}", c.claim, c.note))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let claim_summary = format!(
+        "Supported: {supported}, partial: {partial}, unsupported: {unsupported}\n{}",
+        if unsupported_text.is_empty() {
+            "No unsupported claims were found.".to_string()
+        } else {
+            unsupported_text
+        }
+    );
+
     let user_prompt = format!(
-        "## Original Section\n\n{section_text}\n\n## Evaluation Scores\n\n- Accuracy: {}/10\n- Coherence: {}/10\n- Style: {}/10\n- Source integrity: {}/10\n- Overall: {}\n\n## Hallucination Flags\n\n{}\n\n## Editor's Notes\n\n{}\n\nProduce a concrete, numbered revision brief. Each item must reference a specific paragraph or claim. Return only the revision brief.",
+        "## Original Section\n\n{section_text}\n\n## Evaluation Scores\n\n- Accuracy: {}/10\n- Coherence: {}/10\n- Style: {}/10\n- Source integrity: {}/10\n- Overall: {}\n\n## Hallucination Flags\n\n{}\n\n## Claim Support\n\n{claim_summary}\n\n## Editor's Notes\n\n{}\n\nProduce a concrete, numbered revision brief. Each item must reference a specific paragraph or claim. Return only the revision brief.",
         format_score(evaluation.accuracy),
         format_score(evaluation.coherence),
         format_score(evaluation.style),
@@ -118,7 +135,7 @@ pub async fn revise_section<C: LlmClient>(
     let system_prompt = build_revise_system_prompt(style);
 
     let mut user_prompt = format!(
-        "## Original Section\n\n{section_text}\n\n## Revision Brief\n\n{revision_brief}\n\n## Research Notes\n\n{research_notes}"
+        "## Research Notes (source of truth)\n\n{research_notes}\n\n## Original Section\n\n{section_text}\n\n## Revision Brief\n\n{revision_brief}"
     );
     if let Some(brief) = brief {
         user_prompt.push_str(&brief.prompt_block());
@@ -131,7 +148,7 @@ pub async fn revise_section<C: LlmClient>(
         .system(system_prompt)
         .temperature(0.6);
 
-    let resp = llm.chat(request).await?;
+    let resp = super::chat_with_continuation(llm, request).await?;
     Ok(resp.content)
 }
 
@@ -147,6 +164,8 @@ pub struct ReviseConfig {
     pub exclude_provider: Option<String>,
     /// Length/audience constraints passed to each rewrite.
     pub brief: Option<SectionBrief>,
+    /// Optional second-judge role for ensemble evaluation (`--double-judge`).
+    pub judge_role: Option<String>,
     /// Stop early when the score plateau is smaller than this (0 disables).
     pub plateau_epsilon: f64,
     /// Number of consecutive non-improving evaluations that counts as a plateau.
@@ -159,6 +178,7 @@ impl Default for ReviseConfig {
             max_cycles: 3,
             exclude_provider: None,
             brief: None,
+            judge_role: None,
             plateau_epsilon: 0.05,
             plateau_patience: 2,
         }
@@ -196,7 +216,20 @@ pub async fn revise_until_pass<C: LlmClient>(
 
     for _cycle in 1..=config.max_cycles {
         let exclude = config.exclude_provider.as_deref();
-        let evaluation = evaluate_section(llm, &current, research_notes, style, exclude).await?;
+        let evaluation = match config.judge_role.as_deref() {
+            Some(judge_role) => {
+                evaluate_section_ensemble(
+                    llm,
+                    &current,
+                    research_notes,
+                    style,
+                    exclude,
+                    judge_role,
+                )
+                .await?
+            }
+            None => evaluate_section(llm, &current, research_notes, style, exclude).await?,
+        };
         history.push(evaluation.clone());
 
         if evaluation.passed() {

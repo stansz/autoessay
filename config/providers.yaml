@@ -12,6 +12,7 @@
 # Pricing, 2026-10 (per million tokens, input/output):
 #   deepseek/deepseek-v4.1-flash   $0.06 / $0.12
 #   xiaomi/mimo-v2.6-pro           $0.44 / $0.87
+#   z-ai/glm-5.3                   $0.08 / $1.40   (optional second judge)
 # A 2,500-word essay with a couple of revision cycles costs cents, not dollars.
 #
 # Add a direct provider (uncomment and set its key) only when you want to
@@ -24,6 +25,7 @@ providers:
     models:
       fast: deepseek/deepseek-v4.1-flash        # writer: drafting, revision
       smart: xiaomi/mimo-v2.6-pro               # editor: research, outline, evaluation, brief
+      judge: z-ai/glm-5.3                       # optional second judge (--double-judge)
 
   # deepseek:                                   # direct API, optional
   #   base_url: https://api.deepseek.com/v1
@@ -45,8 +47,10 @@ providers:
 roles:
   research: smart
   outline: smart
+  outline_review: smart
   drafting: fast
   evaluation: smart
+  judge: judge
   reader_panel: smart
   revision: fast
   tightening: fast

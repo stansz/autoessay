@@ -27,4 +27,4 @@ pub use client::{
 };
 pub use config::{ApiType, ProviderConfig, ProviderRegistry, DEFAULT_PROVIDERS_YAML};
 pub use error::{ProviderError, ProviderResult};
-pub use types::{LLMResponse, Message, Tier, Usage};
+pub use types::{LLMResponse, Message, ResponseFormat, Tier, Usage};

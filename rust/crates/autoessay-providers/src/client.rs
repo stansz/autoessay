@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::config::{ApiType, ProviderConfig, ProviderRegistry};
 use crate::error::{ProviderError, ProviderResult};
-use crate::types::{LLMResponse, Message, Tier, Usage};
+use crate::types::{LLMResponse, Message, ResponseFormat, Tier, Usage};
 
 /// HTTP statuses that trigger a retry. Port of RETRYABLE_STATUSES in Python.
 pub const RETRYABLE_STATUSES: [u16; 5] = [429, 500, 502, 503, 504];
@@ -176,6 +176,37 @@ impl Provider {
         max_tokens: u32,
         temperature: f32,
     ) -> ProviderResult<LLMResponse> {
+        self.chat_with_format(
+            messages,
+            tier,
+            prefer,
+            exclude,
+            system,
+            max_tokens,
+            temperature,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Provider::chat`], with an optional structured-output format.
+    ///
+    /// Only OpenAI-compatible endpoints send `response_format`; the native
+    /// Anthropic path ignores it (callers that need guaranteed JSON should route
+    /// through OpenRouter, which uses the OpenAI-compatible path for Anthropic
+    /// models too).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn chat_with_format(
+        &self,
+        messages: &[Message],
+        tier: Tier,
+        prefer: Option<&str>,
+        exclude: Option<&str>,
+        system: Option<&str>,
+        max_tokens: u32,
+        temperature: f32,
+        response_format: Option<&ResponseFormat>,
+    ) -> ProviderResult<LLMResponse> {
         let (cfg, model) = self.registry.resolve_provider(tier, prefer, exclude)?;
 
         let api_key = self
@@ -196,6 +227,7 @@ impl Provider {
             system: system.map(str::to_string),
             max_tokens,
             temperature,
+            response_format: response_format.cloned(),
         };
 
         let result = self.retry_call(request).await?;
@@ -220,8 +252,34 @@ impl Provider {
         max_tokens: u32,
         temperature: f32,
     ) -> ProviderResult<LLMResponse> {
+        self.chat_for_role_with_format(
+            messages,
+            role,
+            prefer,
+            exclude,
+            system,
+            max_tokens,
+            temperature,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Provider::chat_for_role`], with an optional structured-output format.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn chat_for_role_with_format(
+        &self,
+        messages: &[Message],
+        role: &str,
+        prefer: Option<&str>,
+        exclude: Option<&str>,
+        system: Option<&str>,
+        max_tokens: u32,
+        temperature: f32,
+        response_format: Option<&ResponseFormat>,
+    ) -> ProviderResult<LLMResponse> {
         let tier = self.registry.tier_for_role(role);
-        self.chat(
+        self.chat_with_format(
             messages,
             tier,
             prefer,
@@ -229,6 +287,7 @@ impl Provider {
             system,
             max_tokens,
             temperature,
+            response_format,
         )
         .await
     }
@@ -293,6 +352,10 @@ impl Provider {
             .pointer("/usage/output_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let cached_tokens = data
+            .pointer("/usage/cache_read_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         let finish_reason = data
             .get("stop_reason")
             .and_then(Value::as_str)
@@ -306,6 +369,7 @@ impl Provider {
             usage: Usage {
                 prompt_tokens: as_u32(prompt_tokens),
                 completion_tokens: as_u32(completion_tokens),
+                cached_tokens: as_u32(cached_tokens),
             },
             finish_reason,
         })
@@ -323,12 +387,15 @@ impl Provider {
         }
         messages.extend(request.messages.iter().cloned());
 
-        let body = json!({
+        let mut body = json!({
             "model": request.model,
             "messages": messages,
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
         });
+        if let Some(format) = &request.response_format {
+            body["response_format"] = format.to_json();
+        }
 
         let url = format!("{}/chat/completions", request.cfg.base_url);
         let authorization = format!("Bearer {}", request.api_key);
@@ -379,6 +446,13 @@ impl Provider {
             .pointer("/usage/completion_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        // OpenRouter normalizes cache hits to prompt_tokens_details.cached_tokens;
+        // a direct DeepSeek endpoint reports prompt_cache_hit_tokens instead.
+        let cached_tokens = data
+            .pointer("/usage/prompt_tokens_details/cached_tokens")
+            .or_else(|| data.pointer("/usage/prompt_cache_hit_tokens"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         let finish_reason = data
             .pointer("/choices/0/finish_reason")
             .and_then(Value::as_str)
@@ -392,6 +466,7 @@ impl Provider {
             usage: Usage {
                 prompt_tokens: as_u32(prompt_tokens),
                 completion_tokens: as_u32(completion_tokens),
+                cached_tokens: as_u32(cached_tokens),
             },
             finish_reason,
         })
@@ -493,6 +568,7 @@ struct CallRequest {
     system: Option<String>,
     max_tokens: u32,
     temperature: f32,
+    response_format: Option<ResponseFormat>,
 }
 
 /// Build the shared reqwest client (120s timeout, like the Python httpx client).

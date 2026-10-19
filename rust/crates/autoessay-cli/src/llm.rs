@@ -14,8 +14,9 @@
 //! below) and a MockLlm can implement it without any network.
 
 use std::fmt;
+use std::sync::Mutex;
 
-use autoessay_providers::{LLMResponse, Message};
+use autoessay_providers::{LLMResponse, Message, ResponseFormat, Usage};
 
 use crate::error::{CliError, CliResult};
 
@@ -36,6 +37,46 @@ pub struct Route {
     pub model: String,
 }
 
+/// Accumulated token usage across every call a client has made.
+///
+/// Cached tokens are the subset of prompt tokens served from the provider's
+/// prompt cache; they are the cheapest way to run a long pipeline, so the CLI
+/// reports them alongside totals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UsageTotals {
+    /// Total prompt/input tokens.
+    pub prompt_tokens: u64,
+    /// Total completion/output tokens.
+    pub completion_tokens: u64,
+    /// Prompt tokens served from the provider cache, when reported.
+    pub cached_tokens: u64,
+    /// Number of chat calls made.
+    pub calls: u64,
+}
+
+impl UsageTotals {
+    /// Add one call's usage.
+    pub fn record(&mut self, usage: &Usage) {
+        self.prompt_tokens += u64::from(usage.prompt_tokens);
+        self.completion_tokens += u64::from(usage.completion_tokens);
+        self.cached_tokens += u64::from(usage.cached_tokens);
+        self.calls += 1;
+    }
+
+    /// One-line summary for CLI output.
+    pub fn summary(&self) -> String {
+        let cache_pct = if self.prompt_tokens == 0 {
+            0.0
+        } else {
+            self.cached_tokens as f64 / self.prompt_tokens as f64 * 100.0
+        };
+        format!(
+            "{} calls, {} input tokens ({} cached, {cache_pct:.0}%), {} output tokens",
+            self.calls, self.prompt_tokens, self.cached_tokens, self.completion_tokens
+        )
+    }
+}
+
 /// Parameters for a single chat call, mirroring Provider.chat_for_role.
 ///
 /// role selects the tier (research/outline/revision_brief -> smart;
@@ -50,6 +91,8 @@ pub struct ChatRequest {
     pub system: Option<String>,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Optional structured-output format (JSON object / JSON Schema).
+    pub response_format: Option<ResponseFormat>,
 }
 
 impl ChatRequest {
@@ -63,6 +106,7 @@ impl ChatRequest {
             system: None,
             max_tokens: 4096,
             temperature: 0.7,
+            response_format: None,
         }
     }
 
@@ -96,6 +140,12 @@ impl ChatRequest {
         self
     }
 
+    /// Request a structured output format.
+    pub fn response_format(mut self, format: ResponseFormat) -> Self {
+        self.response_format = Some(format);
+        self
+    }
+
     /// The full prompt text (system + user messages) - useful for assertions.
     pub fn all_text(&self) -> String {
         let mut out = String::new();
@@ -126,6 +176,14 @@ pub trait LlmClient {
     fn route_for_role(&self, _role: &str) -> Option<Route> {
         None
     }
+
+    /// Accumulated token usage, when the client tracks it.
+    fn usage_totals(&self) -> UsageTotals {
+        UsageTotals::default()
+    }
+
+    /// Reset the usage counter (called before a pipeline run in tests/CLI).
+    fn reset_usage(&self) {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -148,6 +206,7 @@ fn canned(content: impl Into<String>) -> LLMResponse {
         usage: autoessay_providers::Usage {
             prompt_tokens: 0,
             completion_tokens: 0,
+            cached_tokens: 0,
         },
         finish_reason: "stop".to_string(),
     }
@@ -167,6 +226,16 @@ impl MockLlm {
     pub fn sequence(contents: Vec<String>) -> Self {
         MockLlm {
             responses: contents.into_iter().map(canned).collect(),
+            recorded: std::sync::Mutex::new(Vec::new()),
+            fail_with: None,
+        }
+    }
+
+    /// A mock that returns the given raw responses in order, then repeats the
+    /// last. Useful for testing finish_reason handling (truncated output, etc.).
+    pub fn from_responses(responses: Vec<LLMResponse>) -> Self {
+        MockLlm {
+            responses,
             recorded: std::sync::Mutex::new(Vec::new()),
             fail_with: None,
         }
@@ -230,6 +299,15 @@ impl LlmClient for MockLlm {
         };
         Ok(self.responses[pick].clone())
     }
+
+    fn usage_totals(&self) -> UsageTotals {
+        // Mocks have no token counts, but reporting the call count keeps the
+        // reporting path exercised in offline tests.
+        UsageTotals {
+            calls: self.requests().len() as u64,
+            ..UsageTotals::default()
+        }
+    }
 }
 
 impl fmt::Debug for MockLlm {
@@ -248,12 +326,16 @@ impl fmt::Debug for MockLlm {
 /// Adapter that makes autoessay_providers::Provider satisfy LlmClient.
 pub struct ProviderLlm {
     provider: autoessay_providers::Provider,
+    usage: Mutex<UsageTotals>,
 }
 
 impl ProviderLlm {
     /// Wrap a configured Provider.
     pub fn new(provider: autoessay_providers::Provider) -> Self {
-        ProviderLlm { provider }
+        ProviderLlm {
+            provider,
+            usage: Mutex::new(UsageTotals::default()),
+        }
     }
 
     /// Build from the default registry loaded from environment + config.
@@ -262,14 +344,23 @@ impl ProviderLlm {
             .map_err(|e| CliError::Llm(format!("failed to load provider config: {e}")))?;
         Ok(ProviderLlm {
             provider: autoessay_providers::Provider::new(registry),
+            usage: Mutex::new(UsageTotals::default()),
         })
+    }
+
+    fn record_usage(&self, usage: &Usage) {
+        match self.usage.lock() {
+            Ok(mut totals) => totals.record(usage),
+            Err(poisoned) => poisoned.into_inner().record(usage),
+        }
     }
 }
 
 impl LlmClient for ProviderLlm {
     async fn chat(&self, request: ChatRequest) -> CliResult<LLMResponse> {
-        self.provider
-            .chat_for_role(
+        let response = self
+            .provider
+            .chat_for_role_with_format(
                 &request.messages,
                 &request.role,
                 request.prefer.as_deref(),
@@ -277,9 +368,12 @@ impl LlmClient for ProviderLlm {
                 request.system.as_deref(),
                 request.max_tokens,
                 request.temperature,
+                request.response_format.as_ref(),
             )
             .await
-            .map_err(|e| CliError::Llm(e.to_string()))
+            .map_err(|e| CliError::Llm(e.to_string()))?;
+        self.record_usage(&response.usage);
+        Ok(response)
     }
 
     fn route_for_role(&self, role: &str) -> Option<Route> {
@@ -292,5 +386,19 @@ impl LlmClient for ProviderLlm {
                 provider: cfg.name,
                 model,
             })
+    }
+
+    fn usage_totals(&self) -> UsageTotals {
+        match self.usage.lock() {
+            Ok(totals) => *totals,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+
+    fn reset_usage(&self) {
+        match self.usage.lock() {
+            Ok(mut totals) => *totals = UsageTotals::default(),
+            Err(poisoned) => *poisoned.into_inner() = UsageTotals::default(),
+        }
     }
 }

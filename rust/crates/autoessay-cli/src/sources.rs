@@ -115,6 +115,7 @@ fn parse_source_line(id: &str, rest: &str) -> Source {
         embedding_vector: None,
         verified: false,
         verification_source: None,
+        verification_note: None,
     }
 }
 

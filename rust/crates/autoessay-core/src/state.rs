@@ -6,8 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::eval::HallucinationFlag;
+use crate::eval::{ClaimSupport, HallucinationFlag};
 use crate::error::CoreResult;
+use crate::metrics::StyleMetrics;
 
 // ---------------------------------------------------------------------------
 // Section scores
@@ -70,6 +71,18 @@ pub struct SectionState {
     /// Claims flagged by the hallucination gate.
     #[serde(default)]
     pub hallucination_flags: Vec<HallucinationFlag>,
+
+    /// Claim-level support matrix from the last evaluation.
+    #[serde(default)]
+    pub claims: Vec<ClaimSupport>,
+
+    /// Mechanical style metrics for the final section text.
+    #[serde(default)]
+    pub style_metrics: Option<StyleMetrics>,
+
+    /// Evaluator notes for the latest evaluation (used by `autoessay improve`).
+    #[serde(default)]
+    pub last_notes: String,
 }
 
 fn default_revision_cycles() -> u32 {
@@ -85,6 +98,9 @@ impl Default for SectionState {
             scores: Scores::default(),
             revision_cycles: 0,
             hallucination_flags: Vec::new(),
+            claims: Vec::new(),
+            style_metrics: None,
+            last_notes: String::new(),
         }
     }
 }
@@ -139,6 +155,10 @@ pub struct ProjectState {
     #[serde(default)]
     pub overall_score: Option<f64>,
 
+    /// Word count of the assembled essay.
+    #[serde(default)]
+    pub word_count: Option<u32>,
+
     /// True when the revision loop stopped because scores had plateaued.
     #[serde(default = "default_plateau")]
     pub plateau_detected: bool,
@@ -158,6 +178,7 @@ impl Default for ProjectState {
             target_words: 3000,
             sections: Vec::new(),
             overall_score: None,
+            word_count: None,
             plateau_detected: false,
         }
     }
@@ -233,6 +254,10 @@ pub struct Source {
     /// How the source was verified, e.g. "crossref".
     #[serde(default)]
     pub verification_source: Option<String>,
+
+    /// Human-readable verification detail (matched title, mismatch note, error).
+    #[serde(default)]
+    pub verification_note: Option<String>,
 }
 
 impl Default for Source {
@@ -249,6 +274,7 @@ impl Default for Source {
             embedding_vector: None,
             verified: false,
             verification_source: None,
+            verification_note: None,
         }
     }
 }

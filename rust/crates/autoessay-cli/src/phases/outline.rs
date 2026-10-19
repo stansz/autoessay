@@ -62,6 +62,6 @@ pub async fn generate_outline<C: LlmClient>(
         .system(system_prompt)
         .temperature(0.5);
 
-    let resp = llm.chat(request).await?;
+    let resp = super::chat_with_continuation(llm, request).await?;
     Ok(resp.content)
 }

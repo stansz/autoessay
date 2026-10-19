@@ -21,26 +21,31 @@ cargo run -p autoessay-cli -- run \
   --profile magazine --words 2200 --project-dir ./projects/remote-work
 ```
 
-The MVP uses one provider key (OpenRouter) and two models: a fast writer
-(`deepseek/deepseek-v4.1-flash`) and a different-family editor
-(`xiaomi/mimo-v2.6-pro`) for research, outline, and evaluation. The
-writer never grades its own work, so the anti-self-review rule holds without a
-second API account.
+The MVP uses one provider key (OpenRouter) and different model families per
+role: a fast writer (`deepseek/deepseek-v4.1-flash`), an editor
+(`xiaomi/mimo-v2.6-pro`) for research, outline, and evaluation, and an optional
+second judge (`z-ai/glm-5.3`) for `--double-judge`. The writer never grades its
+own work, so the anti-self-review rule holds without a second API account.
 
 ---
 
-## The Pipeline
+## What the MVP does
 
-| Phase | What it does |
+| Stage | What it does |
 |---|---|
 | **Research** | Topic + seed → structured research notes with tracked sources |
-| **Outline** | Research notes → thesis + argument structure + section map |
-| **Drafting** | Each section written with the style profile, anti-slop rules, sources, and a per-section word budget |
-| **Evaluation** | Different model scores accuracy, coherence, style, source integrity; flags hallucinations |
-| **Revision** | Evaluation → revision brief → rewrite, looping until pass, plateau, or max cycles |
+| **Verify sources** | Crossref resolution: verified / mismatch (DOI points at a different paper) / not found. Status is fed to the evaluator |
+| **Outline** | Thesis + argument structure + section map, with a review gate that regenerates weak outlines before drafting |
+| **Drafting** | Each section written with style + program.md + anti-slop + sources + word budget; token-limit truncation is continued, not silently cut |
+| **Evaluation** | A different model scores four dimensions and returns a claim-level support matrix (supported / partial / unsupported) |
+| **Revision** | Revision brief → rewrite, looping until pass, plateau, or max cycles |
+| **Metrics & assembly** | Readability/style metrics, word count, then `essay.md` |
 
-`run` assembles the final document at `projects/<name>/essay.md` alongside
-`research.md`, `outline.md`, `sections/`, `state.json`, and `sources.json`.
+After a run: `autoessay panel --project-dir ...` runs the three-persona reader
+panel (domain expert, general reader, editor), and `autoessay improve
+--project-dir ...` turns recurring evaluation findings into reviewable prompt
+patches (`improvements.md`) — nothing is applied automatically. Every run prints
+token usage including cached tokens.
 
 ---
 

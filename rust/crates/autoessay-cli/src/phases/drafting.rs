@@ -61,8 +61,11 @@ pub fn build_system_prompt(style: &StyleProfile) -> String {
     parts.concat()
 }
 
-/// Assemble the user prompt with section brief, research, and sources.
-/// Mirrors Python _build_user_prompt, plus length and audience controls.
+/// Assemble the user prompt with research, sources, and section brief.
+///
+/// Ordering is deliberate: the research notes are identical for every section in
+/// a run, so they come first to maximise the provider's prompt-cache prefix hit;
+/// only the section-specific material follows.
 pub fn build_user_prompt(
     title: &str,
     purpose: &str,
@@ -73,20 +76,16 @@ pub fn build_user_prompt(
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
-    parts.push(format!(
-        "Write the following section:\n\n## {title}\n\n{purpose}"
-    ));
+    // Research context (stable prefix across all sections).
+    parts.push(format!("## Research Notes (source of truth)\n\n{research}"));
 
     // Source references for this section
     if let Some(srcs) = sources {
         if !srcs.is_empty() {
             let src_list = srcs.join(", ");
-            parts.push(format!("\n\nUse these sources: {src_list}"));
+            parts.push(format!("\n\n## Sources for This Section\n\nUse these sources: {src_list}"));
         }
     }
-
-    // Research context (trim to relevant parts if too long)
-    parts.push(format!("\n\n## Research Notes\n\n{research}"));
 
     // Previous sections for continuity
     if let Some(prev_sections) = previous_sections {
@@ -97,6 +96,11 @@ pub fn build_user_prompt(
             ));
         }
     }
+
+    // Section-specific brief goes last so the shared prefix stays cacheable.
+    parts.push(format!(
+        "\n\n## Section Brief\n\n## {title}\n\n{purpose}"
+    ));
 
     if let Some(brief) = brief {
         parts.push(brief.prompt_block());
@@ -143,6 +147,6 @@ pub async fn draft_section<C: LlmClient>(
         .temperature(0.7)
         .max_tokens(4096);
 
-    let resp = llm.chat(request).await?;
+    let resp = super::chat_with_continuation(llm, request).await?;
     Ok(resp.content)
 }

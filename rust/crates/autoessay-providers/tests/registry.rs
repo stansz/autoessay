@@ -152,6 +152,23 @@ fn embedded_default_config_is_openrouter_with_two_distinct_models() {
         draft_model, eval_model,
         "anti-self-review requires drafting and evaluation to use different models"
     );
+
+    // The optional second judge must be a distinct model too.
+    assert_eq!(reg.tier_for_role("judge"), Tier::Judge);
+    let (judge_cfg, judge_model) = reg.resolve_provider(Tier::Judge, None, None).unwrap();
+    assert_eq!(judge_cfg.name, "openrouter");
+    assert_eq!(judge_model, "z-ai/glm-5.3");
+    assert_ne!(judge_model, eval_model);
+    assert_ne!(judge_model, draft_model);
+    assert_eq!(reg.tier_for_role("outline_review"), Tier::Smart);
+}
+
+#[test]
+fn parses_all_tiers_including_judge() {
+    assert_eq!("fast".parse::<Tier>().unwrap(), Tier::Fast);
+    assert_eq!("smart".parse::<Tier>().unwrap(), Tier::Smart);
+    assert_eq!("judge".parse::<Tier>().unwrap(), Tier::Judge);
+    assert!("nonsense".parse::<Tier>().is_err());
 }
 
 #[test]
