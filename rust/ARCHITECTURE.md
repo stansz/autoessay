@@ -35,7 +35,7 @@ providers:
     env_key: OPENROUTER_API_KEY
     models:
       fast:  deepseek/deepseek-v4.1-flash    # writer
-      smart: anthropic/claude-sonnet-4.6     # editor
+      smart: xiaomi/mimo-v2.6-pro            # editor
 roles:
   drafting: fast
   evaluation: smart

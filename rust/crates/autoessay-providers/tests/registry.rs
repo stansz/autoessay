@@ -147,7 +147,7 @@ fn embedded_default_config_is_openrouter_with_two_distinct_models() {
     assert_eq!(draft_cfg.name, "openrouter");
     assert_eq!(eval_cfg.name, "openrouter");
     assert_eq!(draft_model, "deepseek/deepseek-v4.1-flash");
-    assert_eq!(eval_model, "anthropic/claude-sonnet-4.6");
+    assert_eq!(eval_model, "xiaomi/mimo-v2.6-pro");
     assert_ne!(
         draft_model, eval_model,
         "anti-self-review requires drafting and evaluation to use different models"

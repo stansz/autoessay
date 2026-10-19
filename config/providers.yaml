@@ -11,7 +11,7 @@
 #
 # Pricing, 2026-10 (per million tokens, input/output):
 #   deepseek/deepseek-v4.1-flash   $0.06 / $0.12
-#   anthropic/claude-sonnet-4.6    $3.00 / $15.00
+#   xiaomi/mimo-v2.6-pro           $0.44 / $0.87
 # A 2,500-word essay with a couple of revision cycles costs cents, not dollars.
 #
 # Add a direct provider (uncomment and set its key) only when you want to
@@ -23,7 +23,7 @@ providers:
     env_key: OPENROUTER_API_KEY
     models:
       fast: deepseek/deepseek-v4.1-flash        # writer: drafting, revision
-      smart: anthropic/claude-sonnet-4.6        # editor: research, outline, evaluation, brief
+      smart: xiaomi/mimo-v2.6-pro               # editor: research, outline, evaluation, brief
 
   # deepseek:                                   # direct API, optional
   #   base_url: https://api.deepseek.com/v1
@@ -41,7 +41,7 @@ providers:
 
 # Role-to-tier mapping. `evaluation` MUST resolve to a different model than
 # `drafting` — the pipeline refuses to run otherwise. With the two models above,
-# drafting resolves to deepseek-v4.1-flash and evaluation to claude-sonnet-4.6.
+# drafting resolves to deepseek-v4.1-flash and evaluation to mimo-v2.6-pro.
 roles:
   research: smart
   outline: smart
