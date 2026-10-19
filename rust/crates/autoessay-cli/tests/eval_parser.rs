@@ -312,10 +312,12 @@ fn system_prompt_includes_program_md_phase_3() {
     let prompt = build_eval_system_prompt(&magazine());
     assert!(
         prompt.contains("You are an editor"),
-        "Phase 3 program.md instructions missing from evaluator prompt: {prompt}"
+        "Phase 3 program.md instructions missing from evaluator prompt"
     );
+    // The real program.md shows the JSON contract inside a ```json fence rather
+    // than spelling out "Return ONLY JSON", so match case-insensitively.
     assert!(
-        prompt.contains("JSON") || prompt.contains("Return ONLY"),
-        "prompt should demand JSON: {prompt}"
+        prompt.to_lowercase().contains("json"),
+        "prompt should demand a JSON object"
     );
 }
