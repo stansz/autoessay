@@ -27,17 +27,19 @@ cargo run -p autoessay-cli -- run \
   --project-dir ./projects/remote-work
 ```
 
-The MVP needs **one provider key**. OpenRouter gives access to both models the
+The MVP needs **one provider key**. OpenRouter gives access to every model the
 flow uses:
 
 | Tier | Model | Used for |
 |---|---|---|
 | `fast` | `deepseek/deepseek-v4.1-flash` | drafting, revision (the heavy lifting) |
-| `smart` | `xiaomi/mimo-v2.6-pro` | research, outline, evaluation, revision brief |
+| `smart` | `xiaomi/mimo-v2.6-pro` | research, outline, outline review, evaluation, revision brief |
+| `judge` | `z-ai/glm-5.3` | optional second judge for `--double-judge` |
 
 Drafting and evaluation resolve to **different model families**, so the
 evaluator never grades its own writing. The pipeline refuses to run if
-`roles.evaluation` is configured to the same model as `roles.drafting`.
+`roles.evaluation` is configured to the same model as `roles.drafting`, and the
+second judge (when enabled) must differ from both.
 
 ### Changing models/config without rebuilding
 
@@ -74,31 +76,62 @@ autoessay [--config <providers.yaml>] <command>
 autoessay run       --seed "..." --profile <name> [--dir <styles-dir>]
                     [--audience 1-5] [--words N]
                     [--project-dir DIR] [--notes ...] [--max-cycles N] [--dry-run]
+                    [--no-verify-sources] [--no-outline-review] [--double-judge]
 autoessay evaluate  --section sec_02 --project-dir DIR
 autoessay revise    --section sec_02 --project-dir DIR [--feedback "..."]
+autoessay improve   --project-dir DIR        # propose prompt-asset patches
+autoessay panel     --project-dir DIR        # three-persona reader panel
 autoessay styles    [--dir DIR]
 ```
 
 `run` executes the full pipeline and writes the project folder, including
-`essay.md`; `evaluate` and `revise` operate on one section of an existing
-project.
+`essay.md`. `improve` reads the project's evaluation findings and writes
+`improvements.md` (reviewable patch proposals for `program.md`, `ANTI-SLOP.md`,
+and the style profile — nothing is applied automatically). `panel` writes
+`panel.md` with domain-expert, general-reader, and editor reviews of the essay.
 
 ---
 
 ## The Pipeline
 
-| Phase | What it does |
+| Stage | What it does |
 |---|---|
 | **Research** | Topic + seed → structured research notes with tracked sources |
+| **Verify sources** | Resolve DOIs/titles against Crossref; mark verified / mismatch / not found. A DOI that resolves to a *different* paper is flagged as a mismatch, not trusted |
 | **Outline** | Research notes → thesis + argument structure + section map |
-| **Drafting** | Each section written with the style profile, program.md Phase 2 instructions, anti-slop rules, sources, and a per-section word budget |
-| **Evaluation** | Scores accuracy, coherence, style, source integrity; flags hallucinations |
-| **Revision** | Evaluation → revision brief → rewrite, looping until pass, plateau, or max cycles |
+| **Outline review** | Editor scores the outline (thesis, structure, source coverage, counterargument); regenerates it once when weak, before any drafting spend |
+| **Drafting** | Each section written with the style profile, program.md Phase 2 instructions, anti-slop rules, sources, and a per-section word budget; truncated outputs are continued, not silently cut |
+| **Evaluation** | A different model scores accuracy, coherence, style, source integrity, and returns a **claim-level support matrix** (supported / partial / unsupported per claim) |
+| **Revision** | Evaluation → revision brief → rewrite, looping until pass, plateau, or max cycles; `--double-judge` averages a second model's scores |
+| **Metrics & assembly** | Mechanical style metrics (readability, sentence rhythm, passive ratio, hedges, nominalizations) plus word count, then `essay.md` |
 
-The orchestrator persists `state.json` after each section and writes
-`sources.json` after research. Drafts are written to disk before evaluation so a
-failed model call never loses paid-for output. `essay.md` is the assembled
-finished document; per-section markdown stays in `sections/`.
+Prompts are ordered research-first so the large, repeated research block is a
+stable prefix for provider prompt caching (OpenRouter/DeepSeek/Xiaomi cache
+reads are a fraction of normal input price). The CLI reports token usage and
+cache hits at the end of every run.
+
+---
+
+## Quality & safety mechanisms
+
+- **Structured outputs.** Evaluations and outline reviews request a JSON Schema
+  response (`response_format`); the tolerant brace-balanced parser remains as a
+  fallback for endpoints without structured-output support.
+- **Anti-self-review.** Writer ≠ evaluator (and judge ≠ both), enforced before
+  any API spend. Offline mocks skip the check because they cannot report routes.
+- **Source verification.** Crossref lookups (DOI, then title search) mark every
+  source; the evaluator receives the verification status and is told to treat
+  mismatched/unverifiable sources as weak evidence. Set `CROSSREF_EMAIL` for the
+  polite pool; `--no-verify-sources` skips the network step.
+- **Claims, not just scores.** The claim matrix makes "which sentence is
+  unsupported" inspectable, and unsupported claims flow into the revision brief.
+- **Mechanical checks.** Readability/hedge/nominalization metrics guard against
+  the classic AI-prose failure modes independently of the LLM judge.
+- **Length guard.** A section that stops on `finish_reason == "length"` is
+  continued (up to two rounds) instead of being treated as complete.
+- **Drafts are safe.** Each draft is written to disk before evaluation, so a
+  failed model call never loses paid-for text; `revise` archives the prior
+  version before overwriting.
 
 ---
 
@@ -106,14 +139,17 @@ finished document; per-section markdown stays in `sections/`.
 
 ```
 projects/<name>/
-  seed.md            run configuration (seed, style, audience, target words)
-  research.md        research notes (source of truth for evaluation)
-  outline.md         thesis + section map
-  sources.json       extracted source registry
-  sections/sec_01.md final text per section
-  revisions/         archived prior versions when a section was revised
-  state.json         phase, per-section status, scores, cycles, flags
-  essay.md           assembled finished document
+  seed.md              run configuration
+  research.md          research notes (source of truth for evaluation)
+  outline.md           thesis + section map
+  outline-review.json  outline scores and issues (when the gate ran)
+  sources.json         extracted sources + verification verdicts
+  sections/sec_01.md   final text per section
+  revisions/           archived prior versions
+  state.json           phase, status, scores, claims, metrics, cycles, flags
+  essay.md             assembled finished document
+  improvements.md      prompt-patch proposals (after `autoessay improve`)
+  panel.md             reader-panel reviews (after `autoessay panel`)
 ```
 
 ---
@@ -140,52 +176,52 @@ schema.
 
 ## Workspace Layout
 
-| Crate | Contents | Ported from |
-|---|---|---|
-| `autoessay-core` | Domain types (style profiles, evaluation, project/source state), program.md section loader | `style/profile.py`, `pipeline/evaluation.py`, `pipeline/_utils.py` |
-| `autoessay-providers` | LLM registry + HTTP client (OpenAI-compatible & Anthropic), role→tier routing, retries | `provider.py` |
-| `autoessay-cli` | Five pipeline phases, orchestrator, clap CLI | `pipeline/*.py`, `cli.py` |
-
----
-
-## API keys & safety
-
-- `.env` and `.env.*` are **gitignored** here and at the repo root. Never commit a
-  real key; only `.env.example` placeholders belong in git.
-- Use a dedicated OpenRouter key with a spend limit rather than an account-wide key.
-- The binary reads the key from the environment/`.env`; it never writes it into
-  project output, logs, or error messages. Keys are only sent in request headers.
-- If a key is ever committed or pasted somewhere public, revoke it in the provider
-  dashboard immediately.
+| Module | Contents |
+|---|---|
+| `autoessay-core` | Domain types (style profiles, evaluation + claims + outline review, project/source state, mechanical style metrics), program.md loader |
+| `autoessay-providers` | LLM registry + HTTP client (OpenAI-compatible & Anthropic, structured outputs, cached-token usage), role→tier routing, retries |
+| `autoessay-cli` | Pipeline phases, Crossref source verification, orchestrator, clap CLI |
 
 ---
 
 ## What's Not Built Yet
 
-This is a working MVP of the core loop. Deliberately out of scope (see
-`../../ARCHITECTURE.md` for the fuller vision):
+Deliberately out of scope (see `../../ARCHITECTURE.md` for the fuller vision):
 
-- **RAG exemplar layer** (FAISS / embeddings) — deferred; style profiles carry the voice guidance for now.
+- **RAG exemplar layer** (FAISS / embeddings) — style profiles carry the voice guidance for now.
 - **Interactive style discovery survey** and the **style fingerprint wizard**.
 - **LaTeX / ePub / landing-page export** — output is markdown for now.
-- **CrossRef / Semantic Scholar citation verification** and the **3-persona reader panel** — the evaluator flags unsupported claims but does not independently verify sources yet.
 - **Resume / idempotency** — a re-run starts a project over; use a new `--project-dir` or copy the old one first.
-- **Token/cost accounting** — usage is returned by the provider but not yet aggregated or printed.
 - **Git commits per phase** — the file layout is ready, but the pipeline does not shell out to git.
+- **Automatic prompt self-editing** — `improve` writes proposals; a human applies them.
+- **Citation checkers beyond Crossref** — Semantic Scholar / OpenAlex / arXiv full-text quote verification are candidates.
+- **Dollar estimates** — token and cache counts are printed; pricing stays provider-side.
 
 ---
 
 ## Development
 
 ```sh
-cargo test --workspace          # 116 tests, all offline (no network, no API keys)
+cargo test --workspace          # 152 tests, all offline (no network, no API keys)
 cargo clippy --all-targets -- -D warnings
 ```
 
 Tests never call a real LLM: phases take an `LlmClient` trait object, with
 `MockLlm` for tests and `ProviderLlm` (wrapping `autoessay-providers`) in
-production. Workspace lints deny `unwrap`/`expect`/`panic` in library code —
-errors are values, not panics.
+production. Crossref verification is behind a `MetadataResolver` trait and faked
+in tests. Workspace lints deny `unwrap`/`expect`/`panic` in library code — errors
+are values, not panics.
+
+## API keys & safety
+
+- `.env` and `.env.*` are **gitignored** here and at the repo root. Never commit a
+  real key; only `.env.example` placeholders belong in git.
+- Use a dedicated OpenRouter key with a spend limit rather than an account-wide key.
+  `CROSSREF_EMAIL` (optional) is only used for Crossref's polite pool, not a secret.
+- The binary reads keys from the environment/`.env`; it never writes them into
+  project output, logs, or error messages. Keys are only sent in request headers.
+- If a key is ever committed or pasted somewhere public, revoke it in the provider
+  dashboard immediately.
 
 ## License
 
