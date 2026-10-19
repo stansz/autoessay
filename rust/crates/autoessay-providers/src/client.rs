@@ -344,6 +344,19 @@ impl Provider {
             )
             .await?;
 
+        // OpenRouter (and some OpenAI-compatible gateways) can return HTTP 200
+        // with an error object when an upstream model fails. Surface the message
+        // instead of reporting the less useful "missing choices" error.
+        if let Some(error) = data.get("error").filter(|value| !value.is_null()) {
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("provider returned an error");
+            return Err(ProviderError::response_parse(format!(
+                "provider error: {message}"
+            )));
+        }
+
         let content = data
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)

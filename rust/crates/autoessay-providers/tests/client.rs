@@ -487,6 +487,40 @@ async fn response_missing_choices_is_a_parse_error_not_a_panic() {
 }
 
 #[tokio::test]
+async fn openai_200_with_error_object_surfaces_provider_message() {
+    // OpenRouter can return 200 + {"error": {...}} when an upstream model fails.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/deepseek/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "error": {"message": "upstream model unavailable", "code": 502}
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = provider_for(&server, &[("DEEPSEEK_API_KEY", "sk-test")]);
+    let err = provider
+        .chat(
+            &[Message::user("Hi")],
+            Tier::Fast,
+            None,
+            None,
+            None,
+            4096,
+            0.7,
+        )
+        .await
+        .unwrap_err();
+
+    match err {
+        ProviderError::ResponseParse(msg) => {
+            assert!(msg.contains("upstream model unavailable"), "msg={msg}");
+        }
+        other => panic!("expected ResponseParse, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn message_serialization_matches_python_shape() {
     let messages = vec![Message::user("Hi"), Message::assistant("Hello")];
     let value: Value = serde_json::to_value(&messages).unwrap();
