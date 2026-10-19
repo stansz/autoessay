@@ -17,6 +17,7 @@ From the `rust/` directory:
 
 ```sh
 cp .env.example .env          # add OPENROUTER_API_KEY (https://openrouter.ai/keys)
+chmod 600 .env                # optional: key readable only by you
 cargo install --path crates/autoessay-cli     # installs the `autoessay` binary
 
 # or run without installing:
@@ -120,6 +121,18 @@ schema.
 | `autoessay-core` | Domain types (style profiles, evaluation, project/source state), program.md section loader | `style/profile.py`, `pipeline/evaluation.py`, `pipeline/_utils.py` |
 | `autoessay-providers` | LLM registry + HTTP client (OpenAI-compatible & Anthropic), role→tier routing, retries | `provider.py` |
 | `autoessay-cli` | Five pipeline phases, orchestrator, clap CLI | `pipeline/*.py`, `cli.py` |
+
+---
+
+## API keys & safety
+
+- `.env` and `.env.*` are **gitignored** here and at the repo root. Never commit a
+  real key; only `.env.example` placeholders belong in git.
+- Use a dedicated OpenRouter key with a spend limit rather than an account-wide key.
+- The binary reads the key from the environment/`.env`; it never writes it into
+  project output, logs, or error messages. Keys are only sent in request headers.
+- If a key is ever committed or pasted somewhere public, revoke it in the provider
+  dashboard immediately.
 
 ---
 
