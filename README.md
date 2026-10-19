@@ -4,38 +4,43 @@ An autonomous pipeline for writing, evaluating, and revising non-fiction essays 
 
 Inspired by the modify→evaluate→keep/discard loop from [NousResearch/autonovel](https://github.com/NousResearch/autonovel) and [karpathy/autoresearch](https://github.com/karpathy/autoresearch), rebuilt from scratch for non-fiction.
 
+> **Status:** the active implementation is the Rust rewrite in [`rust/`](rust/) — see
+> [`rust/README.md`](rust/README.md) for the working quick start. The original
+> Python prototype lives in [`src/`](src/) and is kept for reference; it has no
+> end-to-end orchestrator. The design vision is in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ---
 
-## Quick Start (coming soon)
+## Quick Start
 
+```sh
+git clone https://github.com/stansz/autoessay && cd autoessay/rust
+cp .env.example .env          # add OPENROUTER_API_KEY
+cargo run -p autoessay-cli -- run \
+  --seed "Whether remote work killed company culture" \
+  --profile magazine --words 2200 --project-dir ./projects/remote-work
 ```
-git clone https://github.com/stansz/autoessay && cd autoessay
-cp .env.example .env    # Add your API keys
-uv sync
-uv run python run_pipeline.py --seed "your topic here"
-```
+
+The MVP uses one provider key (OpenRouter) and two models: a fast writer
+(`deepseek/deepseek-v4.1-flash`) and a stronger, different-family editor
+(`anthropic/claude-sonnet-4.6`) for research, outline, and evaluation. The
+writer never grades its own work, so the anti-self-review rule holds without a
+second API account.
 
 ---
 
 ## The Pipeline
 
-### Phase 0: Configuration
-Seed concept → style profile (standard or custom) → audience level → target length
+| Phase | What it does |
+|---|---|
+| **Research** | Topic + seed → structured research notes with tracked sources |
+| **Outline** | Research notes → thesis + argument structure + section map |
+| **Drafting** | Each section written with the style profile, anti-slop rules, sources, and a per-section word budget |
+| **Evaluation** | Different model scores accuracy, coherence, style, source integrity; flags hallucinations |
+| **Revision** | Evaluation → revision brief → rewrite, looping until pass, plateau, or max cycles |
 
-### Phase 1: Research
-Deep research pass → thesis → argument structure → section map with source tracking
-
-### Phase 2: Drafting
-Write sections sequentially with style profile + RAG exemplars injected into every prompt
-
-### Phase 3: Evaluation
-Three-dimensional scoring: factual accuracy, argument coherence, style adherence
-
-### Phase 4: Revision
-Revision briefs → rewrite → iterative tightening → loop until scores stabilize
-
-### Phase 5: Export
-LaTeX → PDF, ePub, optional landing page
+`run` assembles the final document at `projects/<name>/essay.md` alongside
+`research.md`, `outline.md`, `sections/`, `state.json`, and `sources.json`.
 
 ---
 
@@ -43,18 +48,19 @@ LaTeX → PDF, ePub, optional landing page
 
 Ships with 5 standard profiles: Academic, Magazine, Technical, Personal Essay, Policy Brief.
 
-Custom profiles: upload 3–5 sample texts → extracted style fingerprint → saved as reusable profile.
-
-**Phase 2 feature:** Interactive style discovery survey. Rank sample texts, system derives your ideal style.
+Custom profiles: drop a YAML profile in a directory and pass `--profile <name> --dir <dir>`
+(or place it in `config/styles/`). See [`rust/crates/autoessay-core/assets/styles/`](rust/crates/autoessay-core/assets/styles/) for the schema.
 
 ---
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design spec.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design vision, and
+[`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md) for what the Rust implementation
+actually does today.
 
 ---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
