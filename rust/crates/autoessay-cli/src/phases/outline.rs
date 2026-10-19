@@ -59,7 +59,6 @@ pub async fn generate_outline<C: LlmClient>(
     );
 
     let request = ChatRequest::for_role("outline", vec![ChatMessage::user(user_prompt)])
-        .prefer("zai")
         .system(system_prompt)
         .temperature(0.5);
 

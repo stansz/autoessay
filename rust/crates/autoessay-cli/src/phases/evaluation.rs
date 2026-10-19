@@ -92,7 +92,6 @@ pub async fn evaluate_section<C: LlmClient>(
     let user_prompt = build_eval_user_prompt(section_text, research_notes);
 
     let mut request = ChatRequest::for_role("evaluation", vec![ChatMessage::user(user_prompt)])
-        .prefer("deepseek")
         .system(system_prompt)
         .temperature(0.3); // low temp for consistent scoring
 

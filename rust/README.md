@@ -141,7 +141,7 @@ This is a working MVP of the core loop. Deliberately out of scope (see
 ## Development
 
 ```sh
-cargo test --workspace          # 114 tests, all offline (no network, no API keys)
+cargo test --workspace          # 116 tests, all offline (no network, no API keys)
 cargo clippy --all-targets -- -D warnings
 ```
 

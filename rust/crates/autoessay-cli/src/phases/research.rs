@@ -66,7 +66,6 @@ pub async fn generate_research<C: LlmClient>(
     }
 
     let request = ChatRequest::for_role("research", vec![ChatMessage::user(user_prompt)])
-        .prefer("zai")
         .system(system_prompt)
         .temperature(0.4); // lower temp for factual research
 

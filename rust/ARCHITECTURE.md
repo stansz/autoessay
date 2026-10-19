@@ -83,7 +83,7 @@ self-contained. `.env` loading was restored from the Python implementation.
    `async fn ...(llm: &impl LlmClient, ...)`. `ProviderLlm` wraps the real
    `autoessay_providers::Provider`; `MockLlm` serves canned responses and
    records requests. This is the compiler-enforced analogue of the Python
-   tests' patch-then-Mock. **All 114 tests run with no network and no API keys.**
+   tests' patch-then-Mock. **All 116 tests run with no network and no API keys.**
 3. **Role → tier routing plus a model-identity check** replaces the old
    hard-coded `exclude="deepseek"`; see "The MVP provider setup" above.
 4. **Retries return the final error**, never swallow it: {429,500,502,503,504}
