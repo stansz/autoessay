@@ -147,3 +147,104 @@ async fn dry_run_makes_no_llm_calls() {
     assert_eq!(code, 0);
     assert_eq!(mock.call_count(), 0, "dry-run must not call the LLM");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New pipeline flags and review commands
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn parses_pipeline_feature_flags() {
+    let cli = Cli::try_parse_from([
+        "autoessay",
+        "run",
+        "--seed",
+        "x",
+        "--no-verify-sources",
+        "--no-outline-review",
+        "--double-judge",
+    ])
+    .expect("parse run flags");
+    match cli.command {
+        Command::Run(args) => {
+            assert!(args.no_verify_sources);
+            assert!(args.no_outline_review);
+            assert!(args.double_judge);
+        }
+        _ => panic!("expected Run"),
+    }
+}
+
+#[test]
+fn parses_panel_and_improve_commands() {
+    let cli = Cli::try_parse_from(["autoessay", "panel", "--project-dir", "/tmp/proj"])
+        .expect("parse panel");
+    assert!(matches!(cli.command, Command::Panel(_)));
+
+    let cli = Cli::try_parse_from(["autoessay", "improve", "--project-dir", "/tmp/proj"])
+        .expect("parse improve");
+    assert!(matches!(cli.command, Command::Improve(_)));
+}
+
+fn temp_project() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!(
+        "autoessay-cli-cmdtest-{}-{n}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create project dir");
+    std::fs::write(
+        dir.join("essay.md"),
+        "# Test essay\n\nA short body with a claim and a conclusion.",
+    )
+    .expect("write essay");
+    dir
+}
+
+#[tokio::test]
+async fn panel_command_writes_panel_md() {
+    let dir = temp_project();
+    let mock = MockLlm::sequence(vec![
+        "Domain expert: fine.".to_string(),
+        "General reader: fine.".to_string(),
+        "Editor: fine.".to_string(),
+    ]);
+    let cli = Cli::try_parse_from([
+        "autoessay",
+        "panel",
+        "--project-dir",
+        dir.to_str().unwrap(),
+    ])
+    .expect("parse");
+    let code = run_with(&cli, &mock).await;
+    assert_eq!(code, 0);
+    let panel = std::fs::read_to_string(dir.join("panel.md")).expect("panel.md");
+    assert!(panel.contains("# Reader panel"));
+    assert!(panel.contains("## Domain expert"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn improve_command_writes_improvements_md() {
+    let dir = temp_project();
+    std::fs::write(
+        dir.join("state.json"),
+        r#"{"phase":"complete","iteration":1,"style_profile":"magazine","audience_level":3,"target_words":1000,"sections":[],"overall_score":7.0,"plateau_detected":false}"#,
+    )
+    .expect("write state");
+    let mock = MockLlm::always("## Proposed patches\n\n1. Tighten the lede rule.");
+    let cli = Cli::try_parse_from([
+        "autoessay",
+        "improve",
+        "--project-dir",
+        dir.to_str().unwrap(),
+    ])
+    .expect("parse");
+    let code = run_with(&cli, &mock).await;
+    assert_eq!(code, 0);
+    let improvements =
+        std::fs::read_to_string(dir.join("improvements.md")).expect("improvements.md");
+    assert!(improvements.contains("Proposed patches"));
+    std::fs::remove_dir_all(&dir).ok();
+}
