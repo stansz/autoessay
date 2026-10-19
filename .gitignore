@@ -7,8 +7,10 @@ build/
 .venv/
 venv/
 
-# Environment
+# Environment / secrets — never commit real API keys
 .env
+.env.*
+!.env.example
 
 # IDE
 .vscode/

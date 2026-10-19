@@ -7,5 +7,10 @@ target/
 # machine-local cargo config (see BUILD.md)
 .cargo/
 
+# Environment / secrets — never commit real API keys
+.env
+.env.*
+!.env.example
+
 # macOS
 .DS_Store
