@@ -11,12 +11,14 @@ use std::path::{Path, PathBuf};
 use clap::{Args, Parser, Subcommand};
 
 use crate::domains::StyleProfile;
-use crate::error::CliResult;
+use crate::error::{CliError, CliResult};
 use crate::llm::LlmClient;
 use crate::orchestrator::{
     evaluate_project_section, revise_project_section, run_pipeline, PipelineConfig,
 };
-use crate::phases::ReviseConfig;
+use crate::phases::{
+    propose_prompt_improvements, render_panel, run_reader_panel, ReviseConfig,
+};
 use crate::styles::{list_profiles, load_profile};
 
 /// autoessay — autonomous non-fiction essay pipeline.
