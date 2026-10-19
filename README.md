@@ -22,8 +22,8 @@ cargo run -p autoessay-cli -- run \
 ```
 
 The MVP uses one provider key (OpenRouter) and two models: a fast writer
-(`deepseek/deepseek-v4.1-flash`) and a stronger, different-family editor
-(`anthropic/claude-sonnet-4.6`) for research, outline, and evaluation. The
+(`deepseek/deepseek-v4.1-flash`) and a different-family editor
+(`xiaomi/mimo-v2.6-pro`) for research, outline, and evaluation. The
 writer never grades its own work, so the anti-self-review rule holds without a
 second API account.
 

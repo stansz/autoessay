@@ -33,7 +33,7 @@ flow uses:
 | Tier | Model | Used for |
 |---|---|---|
 | `fast` | `deepseek/deepseek-v4.1-flash` | drafting, revision (the heavy lifting) |
-| `smart` | `anthropic/claude-sonnet-4.6` | research, outline, evaluation, revision brief |
+| `smart` | `xiaomi/mimo-v2.6-pro` | research, outline, evaluation, revision brief |
 
 Drafting and evaluation resolve to **different model families**, so the
 evaluator never grades its own writing. The pipeline refuses to run if
