@@ -47,6 +47,8 @@ for a build that keeps cargo's caches inside the repo.
 ## CLI
 
 ```
+autoessay [--config <providers.yaml>] <command>
+
 autoessay run       --seed "..." --profile <name> [--dir <styles-dir>]
                     [--audience 1-5] [--words N]
                     [--project-dir DIR] [--notes ...] [--max-cycles N] [--dry-run]
