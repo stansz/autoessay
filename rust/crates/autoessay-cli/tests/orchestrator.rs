@@ -217,3 +217,54 @@ async fn orchestrator_errors_on_outline_without_sections() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A client whose roles all resolve to the same model, for the preflight test.
+struct SameModelRoutingMock;
+
+impl autoessay_cli::llm::LlmClient for SameModelRoutingMock {
+    async fn chat(
+        &self,
+        _request: autoessay_cli::llm::ChatRequest,
+    ) -> autoessay_cli::error::CliResult<autoessay_cli::llm::LlmResponse> {
+        Err(autoessay_cli::error::CliError::Llm(
+            "the preflight must fail before any LLM call".to_string(),
+        ))
+    }
+
+    fn route_for_role(&self, _role: &str) -> Option<autoessay_cli::llm::Route> {
+        Some(autoessay_cli::llm::Route {
+            provider: "openrouter".to_string(),
+            model: "same/model".to_string(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn orchestrator_refuses_same_drafting_and_evaluation_model() {
+    let dir = temp_dir();
+    let style = load_profile("magazine", None).expect("magazine");
+    let config = PipelineConfig {
+        seed: "x".to_string(),
+        notes: None,
+        profile_name: "magazine".to_string(),
+        audience_level: 3,
+        target_words: 500,
+        project_dir: dir.clone(),
+        verbose: false,
+        revise: ReviseConfig::default(),
+    };
+
+    let err = run_pipeline(&SameModelRoutingMock, &config, &style)
+        .await
+        .expect_err("same drafting/evaluation model must be rejected");
+    assert!(
+        err.to_string().contains("anti-self-review"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !dir.join("seed.md").exists(),
+        "preflight must fail before writing project files"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
