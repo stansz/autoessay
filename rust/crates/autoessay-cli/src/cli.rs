@@ -41,6 +41,10 @@ pub enum Command {
     Evaluate(EvaluateArgs),
     /// Revise one section in an existing project with optional human feedback.
     Revise(ReviseArgs),
+    /// Propose prompt-asset patches from a project's recurring evaluation findings.
+    Improve(ImproveArgs),
+    /// Run the three-persona reader panel over a finished essay.
+    Panel(PanelArgs),
     /// List available style profiles.
     Styles(StylesArgs),
 }
@@ -141,6 +145,28 @@ pub struct StylesArgs {
     pub dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+pub struct ImproveArgs {
+    /// Project directory produced by `autoessay run`.
+    #[arg(long)]
+    pub project_dir: PathBuf,
+
+    /// Style profile name (defaults to the one recorded in state.json).
+    #[arg(long)]
+    pub profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct PanelArgs {
+    /// Project directory produced by `autoessay run`.
+    #[arg(long)]
+    pub project_dir: PathBuf,
+
+    /// Style profile name (defaults to the one recorded in state.json).
+    #[arg(long)]
+    pub profile: Option<String>,
+}
+
 /// Exit code convention: 0 success, 1 error.
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_ERROR: i32 = 1;
@@ -162,6 +188,8 @@ async fn dispatch<C: LlmClient>(cli: &Cli, llm: &C) -> CliResult<()> {
         Command::Run(args) => cmd_run(args, llm).await,
         Command::Evaluate(args) => cmd_evaluate(args, llm).await,
         Command::Revise(args) => cmd_revise(args, llm).await,
+        Command::Improve(args) => cmd_improve(args, llm).await,
+        Command::Panel(args) => cmd_panel(args, llm).await,
         Command::Styles(args) => cmd_styles(args),
     }
 }
