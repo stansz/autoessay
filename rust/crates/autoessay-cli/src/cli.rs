@@ -23,6 +23,12 @@ use crate::styles::{list_profiles, load_profile};
 #[derive(Debug, Parser)]
 #[command(name = "autoessay", version, about = "Autonomous non-fiction essay pipeline", long_about = None)]
 pub struct Cli {
+    /// Path to providers.yaml (overrides AUTOESSAY_CONFIG and config discovery).
+    ///
+    /// Use this to switch models/providers without rebuilding the binary.
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }

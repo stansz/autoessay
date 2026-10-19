@@ -38,6 +38,21 @@ fn parses_run_command() {
 }
 
 #[test]
+fn parses_global_config_override() {
+    let cli = Cli::try_parse_from(["autoessay", "--config", "/tmp/providers.yaml", "styles"])
+        .expect("parse with --config");
+    assert_eq!(
+        cli.config,
+        Some(std::path::PathBuf::from("/tmp/providers.yaml"))
+    );
+
+    // global flags are accepted after the subcommand too
+    let cli = Cli::try_parse_from(["autoessay", "styles", "--config", "/tmp/p.yaml"])
+        .expect("global flag after subcommand");
+    assert_eq!(cli.config, Some(std::path::PathBuf::from("/tmp/p.yaml")));
+}
+
+#[test]
 fn parses_evaluate_command() {
     let cli = Cli::try_parse_from([
         "autoessay",

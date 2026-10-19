@@ -14,6 +14,11 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // An explicit --config wins over AUTOESSAY_CONFIG and config discovery.
+    if let Some(path) = &cli.config {
+        std::env::set_var("AUTOESSAY_CONFIG", path);
+    }
+
     let llm = match ProviderLlm::from_env() {
         Ok(llm) => llm,
         Err(e) => {
