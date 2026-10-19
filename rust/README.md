@@ -2,8 +2,8 @@
 
 An autonomous pipeline for researching, drafting, evaluating, and revising
 non-fiction essays and short papers — from a seed topic to a finished,
-style-consistent, source-tracked document. This is a Rust rewrite of the
-original Python prototype in [`../autoessay`](../autoessay).
+style-consistent, source-tracked document. This is the Rust implementation of
+the pipeline; the original Python prototype lives at the repo root (`../../src`).
 
 CLI-first, provider-agnostic, all data on your machine. Every essay project is
 a folder of markdown files (the "GitHub as review surface" layout), so you can
@@ -13,22 +13,30 @@ diff, review, and roll back any draft.
 
 ## Quick Start
 
+From the `rust/` directory:
+
 ```sh
-cd autoessay-rs
+cp .env.example .env          # add OPENROUTER_API_KEY (https://openrouter.ai/keys)
 cargo install --path crates/autoessay-cli     # installs the `autoessay` binary
 
 # or run without installing:
 cargo run -p autoessay-cli -- run \
   --seed "Whether remote work killed company culture" \
-  --profile magazine --audience 3 --words 2500 \
+  --profile magazine --audience 3 --words 2200 \
   --project-dir ./projects/remote-work
 ```
 
-Set at least one provider API key first (see `crates/autoessay-providers/config/providers.yaml`):
+The MVP needs **one provider key**. OpenRouter gives access to both models the
+flow uses:
 
-```sh
-cp .env.example .env   # add DEEPSEEK_API_KEY and/or ZAI_API_KEY
-```
+| Tier | Model | Used for |
+|---|---|---|
+| `fast` | `deepseek/deepseek-v4.1-flash` | drafting, revision (the heavy lifting) |
+| `smart` | `anthropic/claude-sonnet-4.6` | research, outline, evaluation, revision brief |
+
+Drafting and evaluation resolve to **different model families**, so the
+evaluator never grades its own writing. The pipeline refuses to run if
+`roles.evaluation` is configured to the same model as `roles.drafting`.
 
 If you hit sandbox approval prompts on a restricted machine, see [BUILD.md](BUILD.md)
 for a build that keeps cargo's caches inside the repo.
@@ -38,15 +46,17 @@ for a build that keeps cargo's caches inside the repo.
 ## CLI
 
 ```
-autoessay run       --seed "..." --profile <name> [--audience 1-5] [--words N]
+autoessay run       --seed "..." --profile <name> [--dir <styles-dir>]
+                    [--audience 1-5] [--words N]
                     [--project-dir DIR] [--notes ...] [--max-cycles N] [--dry-run]
 autoessay evaluate  --section sec_02 --project-dir DIR
 autoessay revise    --section sec_02 --project-dir DIR [--feedback "..."]
 autoessay styles    [--dir DIR]
 ```
 
-`run` executes the full pipeline and writes the project folder; `evaluate` and
-`revise` operate on one section of an existing project.
+`run` executes the full pipeline and writes the project folder, including
+`essay.md`; `evaluate` and `revise` operate on one section of an existing
+project.
 
 ---
 
@@ -56,20 +66,38 @@ autoessay styles    [--dir DIR]
 |---|---|
 | **Research** | Topic + seed → structured research notes with tracked sources |
 | **Outline** | Research notes → thesis + argument structure + section map |
-| **Drafting** | Each section written with the style profile + anti-slop rules + sources |
+| **Drafting** | Each section written with the style profile, program.md Phase 2 instructions, anti-slop rules, sources, and a per-section word budget |
 | **Evaluation** | Scores accuracy, coherence, style, source integrity; flags hallucinations |
-| **Revision** | Evaluation → revision brief → rewrite → tighten, loop until pass or plateau |
+| **Revision** | Evaluation → revision brief → rewrite, looping until pass, plateau, or max cycles |
 
-Each phase can run independently (`evaluate`, `revise`), and the orchestration
-persists `state.json` + `sources.json` after every phase.
+The orchestrator persists `state.json` after each section and writes
+`sources.json` after research. Drafts are written to disk before evaluation so a
+failed model call never loses paid-for output. `essay.md` is the assembled
+finished document; per-section markdown stays in `sections/`.
+
+---
+
+## Output layout
+
+```
+projects/<name>/
+  seed.md            run configuration (seed, style, audience, target words)
+  research.md        research notes (source of truth for evaluation)
+  outline.md         thesis + section map
+  sources.json       extracted source registry
+  sections/sec_01.md final text per section
+  revisions/         archived prior versions when a section was revised
+  state.json         phase, per-section status, scores, cycles, flags
+  essay.md           assembled finished document
+```
 
 ---
 
 ## Style System
 
 Five standard profiles ship embedded in the binary; `autoessay styles` lists
-them. The style profile **is** the configuration: citation strictness,
-hallucination gates, voice constraints, and quality thresholds all flow from it.
+them. The style profile **is** the configuration: hallucination gates and
+quality thresholds flow from it.
 
 | Profile | Use case |
 |---|---|
@@ -79,8 +107,9 @@ hallucination gates, voice constraints, and quality thresholds all flow from it.
 | `personal-essay` | Substack, blog, opinion piece |
 | `policy-brief` | Think tank report, advocacy, government briefing |
 
-Custom profiles: drop a YAML in a styles directory and pass `--profile <name>`
-with `--dir`. See `crates/autoessay-core/assets/styles/*.yaml` for the schema.
+Custom profiles: drop a YAML in a styles directory and pass `--profile <name>
+--dir <dir>` to `run`. See `crates/autoessay-core/assets/styles/*.yaml` for the
+schema.
 
 ---
 
@@ -96,21 +125,23 @@ with `--dir`. See `crates/autoessay-core/assets/styles/*.yaml` for the schema.
 
 ## What's Not Built Yet
 
-This is a working v1 of the core loop. Deliberately out of scope (see
-`../autoessay/ARCHITECTURE.md` for the fuller vision):
+This is a working MVP of the core loop. Deliberately out of scope (see
+`../../ARCHITECTURE.md` for the fuller vision):
 
-- **RAG exemplar layer** (FAISS / embeddings / source dedup) — dropped for v1; a good `prompt_instructions` block plus a few static exemplars covers most of the gain.
-- **Interactive style discovery survey** and the **custom-profile wizard TUI**.
+- **RAG exemplar layer** (FAISS / embeddings) — deferred; style profiles carry the voice guidance for now.
+- **Interactive style discovery survey** and the **style fingerprint wizard**.
 - **LaTeX / ePub / landing-page export** — output is markdown for now.
-- **CrossRef / Semantic Scholar citation verification** and the **3-persona reader panel**.
-- **Git commits per phase** — the file layout is ready for it, but the pipeline does not shell out to git yet.
+- **CrossRef / Semantic Scholar citation verification** and the **3-persona reader panel** — the evaluator flags unsupported claims but does not independently verify sources yet.
+- **Resume / idempotency** — a re-run starts a project over; use a new `--project-dir` or copy the old one first.
+- **Token/cost accounting** — usage is returned by the provider but not yet aggregated or printed.
+- **Git commits per phase** — the file layout is ready, but the pipeline does not shell out to git.
 
 ---
 
 ## Development
 
 ```sh
-cargo test --workspace          # 108 tests, all offline (no network)
+cargo test --workspace          # 114 tests, all offline (no network, no API keys)
 cargo clippy --all-targets -- -D warnings
 ```
 
@@ -121,4 +152,4 @@ errors are values, not panics.
 
 ## License
 
-MIT
+MIT — see [`../LICENSE`](../LICENSE).

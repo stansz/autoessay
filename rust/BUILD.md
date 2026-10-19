@@ -5,7 +5,7 @@ access (an approval prompt). Keep cargo's caches inside the repo instead and
 everything runs under normal workspace permissions:
 
 ```sh
-cd autoessay-rs
+cd rust
 source $HOME/.cargo/env
 export CARGO_HOME="$PWD/.cargo-home"
 cargo build
