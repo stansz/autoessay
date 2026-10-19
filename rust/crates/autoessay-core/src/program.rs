@@ -70,7 +70,6 @@ fn normalize_heading(value: &str) -> String {
         .collect::<String>()
         .trim()
         .trim_start_matches('#')
-        .trim()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
