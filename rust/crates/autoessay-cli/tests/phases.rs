@@ -9,7 +9,7 @@
 use autoessay_cli::llm::MockLlm;
 use autoessay_cli::phases::{
     build_system_prompt, build_user_prompt, draft_section, generate_outline, generate_research,
-    generate_revision_brief, revise_section, revise_until_pass, ReviseConfig,
+    generate_revision_brief, revise_section, revise_until_pass, ReviseConfig, SectionBrief,
 };
 use autoessay_cli::styles::load_profile;
 use autoessay_core::{EvaluationResult, StyleProfile};
@@ -191,6 +191,64 @@ fn build_system_prompt_includes_style_and_anti_slop() {
     let prompt = build_system_prompt(&magazine());
     assert!(prompt.contains("Show, don't tell"));
     assert!(prompt.contains("Writing Rules"));
+}
+
+#[test]
+fn build_system_prompt_injects_program_md_phase_2() {
+    // Regression: program.md headings are backticked, so a naive lookup returned
+    // "" and every phase silently used its fallback. The real Phase 2 text must
+    // now reach the drafting prompt.
+    let prompt = build_system_prompt(&magazine());
+    assert!(
+        prompt.contains("You are a writer"),
+        "Phase 2 program.md instructions missing from drafting system prompt"
+    );
+}
+
+#[tokio::test]
+async fn drafting_prompt_includes_length_and_audience() {
+    let mock = MockLlm::always("ok");
+    let brief = SectionBrief {
+        target_words: 600,
+        audience_level: 4,
+    };
+    draft_section(
+        &mock,
+        "Title",
+        "Purpose",
+        RESEARCH,
+        &magazine(),
+        None,
+        None,
+        Some(brief),
+    )
+    .await
+    .expect("draft");
+    let text = mock.last_request().expect("request").all_text();
+    assert!(text.contains("about 600 words"));
+    assert!(text.contains("Audience level: 4/5"));
+}
+
+#[tokio::test]
+async fn revise_prompt_includes_length_and_audience() {
+    let mock = MockLlm::always("ok");
+    let brief = SectionBrief {
+        target_words: 500,
+        audience_level: 2,
+    };
+    revise_section(
+        &mock,
+        "Original section",
+        "1. Tighten the lede.",
+        RESEARCH,
+        &magazine(),
+        Some(brief),
+    )
+    .await
+    .expect("revise");
+    let text = mock.last_request().expect("request").all_text();
+    assert!(text.contains("about 500 words"));
+    assert!(text.contains("Audience level: 2/5"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
